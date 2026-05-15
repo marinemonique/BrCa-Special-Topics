@@ -1,0 +1,514 @@
+---
+title: "Special Topics"
+author: "Monique White"
+output: html_document
+date: "2026-03-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+# BiocManager::install("DESeq2")
+# BiocManager::install("tximport")
+#BiocManager::install("edgeR")
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("org.Hs.eg.db")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(readr)
+library(tidyverse)
+library(edgeR)
+
+library(DESeq2)
+library(tximport)
+
+bcv <- 0.1
+```
+
+Data downloaded from the https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE101540 https://pmc.ncbi.nlm.nih.gov/articles/PMC5991599/
+
+```{r}
+T025 <- read_tsv("GSE101540_raw_counts_GRCh38.p13_NCBI(1).tsv") # read in raw count tsv
+```
+GSM2705897 	COLO320_0nM
+GSM2705898 	COLO320_30nM
+GSM2705899 	COLO320_100nM
+GSM2705900 	COLO320_300nM
+GSM2705901 	MB468_0nM
+GSM2705902 	MB468_30nM
+GSM2705903 	MB468_100nM
+GSM2705904 	MB468_300nM
+GSM2705905 	H1048_0nM
+GSM2705906 	H1048_30nM
+GSM2705907 	H1048_100nM
+GSM2705908 	H1048_300nM
+GSM2705909 	786O_0nM
+GSM2705910 	786O_30nM
+GSM2705911 	786O_100nM
+GSM2705912 	786O_300nM
+
+I am interested in the breast cancer cells in particular, so I may select those columns
+
+```{r}
+T025_BR <-  T025 %>% 
+  select(GeneID, GSM2705901, GSM2705902, GSM2705903, GSM2705904) #select all the breast cancer cells
+
+# T025_BR <- T025_BR %>% 
+#   mutate(
+#     "MB468_0nM" = GSM2705901,
+#     "MB468_30nM" = GSM2705902,
+#     "MB468_100nM" = GSM2705903,
+#     "MB468_300nM" = GSM2705904
+#   )
+# 
+# #checking differece between reads between treatment concentration
+# 
+# T025_BR_calc <- T025_BR %>% 
+#   mutate(
+#     "300nm" = GSM2705904 - GSM2705901,
+#     "100nm" = GSM2705903 - GSM2705901,
+#     "30nm" = GSM2705902 - GSM2705901
+#   )
+
+```
+
+edgeR is primarily intended for use with data including biological replication. Nevertheless,
+RNA-Seq and ChIP-Seq are still expensive technologies, so it sometimes happens that only
+one library can be created for each treatment condition. In these cases there are no replicate
+libraries from which to estimate biological variability. In this situation, the data analyst is
+faced with the following choices, none of which are ideal. We do not recommend any of
+these choices as a satisfactory alternative for biological replication. Rather, they are the best
+that can be done at the analysis stage, and options 2Ű4 may be better than assuming that biological variability is absent.
+1. Be satisĄed with a descriptive analysis, that might include an MDS plot and an analysis
+of fold changes. Do not attempt a signiĄcance analysis. This may be the best advice.
+2. Simply pick a reasonable dispersion value, based on your experience with similar data,
+and use that for exactTest or glmFit. Typical values for the common BCV (square-rootdispersion) for datasets arising from well-controlled experiments are 0.4 for human data,
+0.1 for data on genetically identical model organisms or 0.01 for technical replicates.
+Here is a toy example with simulated data:
+
+*The typical BCV value of 0.4 for human data.*
+
+```{r}
+bcv <- 0.1
+```
+
+# Breast Cancer Cells
+
+```{r}
+# convert to matrix
+count_mat_br <- as.matrix(T025_BR[, -(1)])
+
+# set gene IDs as rownames
+rownames(count_mat_br) <- T025_BR$GeneID
+
+group <- factor(c("0nM", "30nM", "100nM", "300nM"))
+```
+
+
+## 0nM vs 30nM
+
+```{r}
+y <- DGEList(counts = count_mat_br, group = group)
+
+#perform exact test
+et <- exactTest(y, dispersion = bcv^2)
+
+et_table <- et$table
+```
+```{r}
+# 0nm vs 30nm
+et_MB4680nm_30nm <- exactTest(y, pair = c("0nM","30nM"), dispersion = bcv^2)
+
+res_MB4680nm_30nm <- et_MB4680nm_30nm$table %>%
+  rownames_to_column("GeneID")
+
+signif_genes <- res_MB4680nm_30nm %>% 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(PValue) %>% 
+  filter(PValue<0.05)
+
+volc_data <- res_MB4680nm_30nm %>% 
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = logFC, y = -log10(PValue))) + 
+  geom_point() +
+  geom_point(data = signif_genes, color="red")
+```
+
+###  Gene Enrichment
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db) 
+```
+
+```{r}
+gene_list <- signif_genes$GeneID
+gene_list <- as.character(gene_list)
+
+ego <- enrichGO(gene          = gene_list,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENTREZID",
+                ont           = "BP",   # try also "MF" and "CC"
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05,
+                readable      = TRUE)
+results_df <- as.data.frame(ego)
+head(results_df)
+```
+
+```{r}
+background_genes <- rownames(res_MB4680nm_30nm)
+
+ego <- enrichGO(gene          = gene_list,
+                universe      = background_genes,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENTREZID",
+                ont           = "BP",
+                pAdjustMethod = "BH")
+
+results_df <- as.data.frame(ego)
+head(results_df)
+```
+
+## 0nM vs 100nM
+
+```{r}
+# 0nm vs 100nm
+et_MB468_0nm_100nm <- exactTest(y, pair = c("0nM","100nM"), dispersion = bcv^2)
+
+res_MB468_0nm_100nm <- et_MB468_0nm_100nm$table %>%
+  rownames_to_column("GeneID")
+
+signif_genes <- res_MB468_0nm_100nm %>% 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(PValue) %>% 
+  filter(PValue<0.05)
+
+volc_data <- res_MB468_0nm_100nm %>% 
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = logFC, y = -log10(PValue))) + 
+  geom_point() +
+  geom_point(data = signif_genes, color="red")
+```
+
+```{r}
+signif_genes <- res_MB468_0nm_100nm %>% 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(PValue) %>% 
+  filter(-log10(PValue) > 30) # don't do this because it then goes back to light perception which isn't really what we want to look at
+
+volc_data <- res_MB468_0nm_100nm %>% 
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = logFC, y = -log10(PValue))) + 
+  geom_point() +
+  geom_point(data = signif_genes, color="red")
+```
+
+```{r}
+gene_list <- signif_genes$GeneID
+gene_list <- as.character(gene_list)
+
+ego <- enrichGO(gene          = gene_list,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENTREZID",
+                ont           = "BP",   # try also "MF" and "CC"
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05,
+                readable      = TRUE)
+
+results_df <- as.data.frame(ego)
+head(results_df)
+```
+
+
+
+```{r}
+background_genes <- rownames(res_MB468_0nm_100nm)
+
+ego <- enrichGO(gene          = gene_list,
+                universe      = background_genes,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENTREZID",
+                ont           = "BP",
+                pAdjustMethod = "BH")
+results_df <- as.data.frame(ego)
+head(results_df)
+```
+
+## 0nM vs 300nM
+```{r}
+# 0nm vs 300nm
+et_MB4680nm_300nm <- exactTest(y, pair = c("0nM","300nM"), dispersion = bcv^2)
+
+res_MB4680nm_300nm <- et_MB4680nm_300nm$table %>%
+  rownames_to_column("GeneID")
+
+signif_genes <- res_MB4680nm_300nm %>% 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(PValue) %>% 
+  filter(PValue<0.05)
+
+volc_data <- res_MB4680nm_300nm %>% 
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = logFC, y = -log10(PValue))) + 
+  geom_point() +
+  geom_point(data = signif_genes, color="red")
+```
+```{r}
+gene_list <- signif_genes$GeneID
+gene_list <- as.character(gene_list)
+
+ego <- enrichGO(gene          = gene_list,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENTREZID",
+                ont           = "BP",   # try also "MF" and "CC"
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05,
+                readable      = TRUE)
+
+results_df <- as.data.frame(ego)
+head(results_df)
+```
+
+```{r}
+gene_list <- signif_genes$GeneID
+gene_list <- as.character(gene_list)
+
+ego <- enrichGO(gene          = gene_list,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENTREZID",
+                ont           = "MF",   # try also "MF" and "CC"
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05,
+                readable      = TRUE)
+
+results_df <- as.data.frame(ego)
+head(results_df)
+```
+
+
+Looking at AFAP1
+
+```{r}
+T025_BR %>% 
+  filter(GeneID %in% c("24017", "60312"))
+```
+
+
+Hmm.. That is interesting. Its expression seems to get lower as the concentration of T025 is increased
+
+```{r}
+# et_table
+
+et_tibble <- rownames_to_column(et_table, var = "GeneID")
+
+# et_tibble %>% 
+#   filter(GeneID == "60312")
+```
+
+
+# 786O cancer cell line
+```{r}
+T025_786O <- T025 %>% select(GeneID,GSM2705909,GSM2705910,GSM2705911, GSM2705912)
+# convert to matrix
+count_mat_786O <- as.matrix(T025_786O[, -(1)])
+
+# set gene IDs as rownames
+rownames(count_mat_786O) <- T025_786O$GeneID
+
+group <- factor(c("0nM", "30nM", "100nM", "300nM"))
+```
+
+```{r}
+y <- DGEList(counts = count_mat_786O, group = group)
+
+#perform exact test
+et <- exactTest(y, dispersion = bcv^2)
+
+et_table <- et$table
+```
+
+## 0nm vs 30nm
+```{r}
+et_786O_30nm <- exactTest(y, pair = c("0nM","30nM"), dispersion = bcv^2)
+
+res_786O_30nm <- et_786O_30nm$table %>%
+  rownames_to_column("GeneID")
+
+signif_genes <- res_786O_30nm %>% 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(PValue) %>% 
+  filter(PValue<0.05)
+
+volc_data <- res_786O_30nm %>% 
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = logFC, y = -log10(PValue))) + 
+  geom_point() +
+  geom_point(data = signif_genes, color="red")
+```
+
+## 0nM vs 100nM
+```{r}
+et_786O_100nm <- exactTest(y, pair = c("0nM","100nM"), dispersion = bcv^2)
+
+res_786O_100nm <- et_786O_100nm$table %>%
+  rownames_to_column("GeneID")
+
+signif_genes <- res_786O_100nm %>% 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(PValue) %>% 
+  filter(PValue<0.05)
+
+volc_data <- res_786O_100nm %>% 
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = logFC, y = -log10(PValue))) + 
+  geom_point() +
+  geom_point(data = signif_genes, color="red")
+```
+
+## 0nM vs 300nM
+```{r}
+et_786O_300nm <- exactTest(y, pair = c("0nM","300nM"), dispersion = bcv^2)
+
+res_786O_300nm <- et_786O_300nm$table %>%
+  rownames_to_column("GeneID")
+
+signif_genes <- res_786O_300nm %>% 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(PValue) %>% 
+  filter(PValue<0.05)
+
+volc_data <- res_786O_300nm %>% 
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = logFC, y = -log10(PValue))) + 
+  geom_point() +
+  geom_point(data = signif_genes, color="red")
+```
+
+
+## Compare baseline levels of AFAP1-AS1 in Different cell lines
+
+GSM2705897 	COLO320_0nM
+GSM2705901 	MB468_0nM
+GSM2705905 	H1048_0nM
+GSM2705909 	786O_0nM
+
+```{r}
+T025_0nm <-  T025 %>% 
+  select(GeneID, GSM2705897, GSM2705901, GSM2705905, GSM2705909) #select all cell lines at 0nm
+```
+
+
+```{r}
+# convert to matrix
+count_mat_0nm <- as.matrix(T025_0nm[, -(1)])
+
+# set gene IDs as rownames
+rownames(count_mat_0nm) <- T025_0nm$GeneID
+
+group_0nm <- factor(c("COLO320", "MB468", "H1048", "786O"))
+```
+
+
+
+```{r}
+y_0nm <- DGEList(counts = count_mat_0nm, group = group_0nm)
+
+# normalization
+y_0nm <- calcNormFactors(y_0nm)
+
+# # estimate dispersion
+# y_0nm <- estimateDisp(y_0nm)
+
+#perform exact test
+et_0nm <- exactTest(y_0nm, dispersion = bcv^2)
+
+et_table_0nm <- et_0nm$table
+```
+
+```{r}
+et_tibble_0nm <- rownames_to_column(et_table_0nm, var = "GeneID")
+
+et_tibble_0nm %>% 
+  filter(GeneID == "60312")
+```
+
+
+```{r}
+# MB468 vs H1048
+et_MB468_H1048 <- exactTest(y_0nm, pair = c("MB468","H1048"), dispersion = bcv^2)
+
+res_MB468_H1048 <- et_MB468_H1048$table %>%
+  rownames_to_column("GeneID")
+
+# MB468 vs 786O
+et_MB468_786O <- exactTest(y_0nm, pair = c("MB468","786O"), dispersion = bcv^2)
+
+res_MB468_786O <- et_MB468_786O$table %>%
+  rownames_to_column("GeneID")
+```
+
+```{r}
+# MB468 vs COLO320
+et_MB468_COLO320 <- exactTest(y_0nm, pair = c("MB468","COLO320"), dispersion = bcv^2)
+
+res_MB468_COLO320 <- et_MB468_COLO320$table %>%
+  rownames_to_column("GeneID")
+
+
+# MB468 vs H1048
+et_MB468_H1048 <- exactTest(y_0nm, pair = c("MB468","H1048"), dispersion = bcv^2)
+
+res_MB468_H1048 <- et_MB468_H1048$table %>%
+  rownames_to_column("GeneID")
+
+
+# MB468 vs 786O
+et_MB468_786O <- exactTest(y_0nm, pair = c("MB468","786O"), dispersion = bcv^2)
+
+res_MB468_786O <- et_MB468_786O$table %>%
+  rownames_to_column("GeneID")
+```
+
+
+```{r}
+res_MB468_COLO320 %>% filter(GeneID == "60312")
+res_MB468_H1048 %>% filter(GeneID == "60312")
+res_MB468_786O %>% filter(GeneID == "60312")
+```
+AFAP1-AS1 is highest in Renal Cell Carcinoma cell line (7860), followed by Breast Cancer cell line (MB468).
+See if treatment with T025 also reduces the expression of this gene as well, and whether the differential expression is greater in Breast Cancer cells or Not
+
