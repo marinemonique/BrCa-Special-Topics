@@ -30,6 +30,7 @@ Data downloaded from the https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE10154
 
 ```{r}
 T025 <- read_tsv("GSE101540_raw_counts_GRCh38.p13_NCBI(1).tsv") # read in raw count tsv
+
 ```
 GSM2705897 	COLO320_0nM
 GSM2705898 	COLO320_30nM
@@ -511,4 +512,33 @@ res_MB468_786O %>% filter(GeneID == "60312")
 ```
 AFAP1-AS1 is highest in Renal Cell Carcinoma cell line (7860), followed by Breast Cancer cell line (MB468).
 See if treatment with T025 also reduces the expression of this gene as well, and whether the differential expression is greater in Breast Cancer cells or Not
+
+
+
+#GSE196557
+Shah et al. 2022 Towards resolution of the intron retention paradox in breast cancer
+
+Explored intron retention patterns in normal breast epithelial cells (MCF10A) and estrogen receptor positive (ER+) breast cancer cells (MCF7).
+
+Method: Total RNA was isolated from MCF7 and MCF10A cells using Trizol (Invitrogen). The RNA quality was assessed using RNA 6000 Nano Chips on an Agilent Bioanalyzer (Agilent Technologies) to confirm an RNA integrity score of >7.0. mRNA-seq was performed by Macrogen (Korea) using the Illumina Hi-Seq 2000 platform. RNA-seq libraries were prepared from > 1 μg of total RNA using TruSeq RNA sample prep kit (Illumina) according to the manufacturers’ instructions.
+
+```{r}
+Shah_raw <- read_tsv(file = "GSE196557_raw_counts_GRCh38.p13_NCBI.tsv")
+```
+
+GSM5889119: MCF10a_1
+GSM5889120: MCF10a_2
+GSM5889121: MCF7_1
+GSM5889122: MCF7_2
+```{r}
+
+Shah_long<- Shah_raw |> pivot_longer(cols = GSM5889119:GSM5889122, names_to = "GSM", values_to = "raw_count")
+  
+  
+Shah_long <- Shah_long |>   
+  mutate(
+    Cell_line = case_when(GSM %in% c("GSM5889119", "GSM5889120") ~ "MCF10a",
+                          GSM %in% c("GSM5889121", "GSM5889122") ~ "MCF7")
+  )
+```
 
