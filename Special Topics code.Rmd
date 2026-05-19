@@ -49,7 +49,7 @@ GSM2705910 	786O_30nM
 GSM2705911 	786O_100nM
 GSM2705912 	786O_300nM
 
-I am interested in the breast cancer cells in particular, so I may select those columns
+I am interested in the breast cancer cells in particular, so I may select those columns. MB468 is a 
 
 ```{r}
 T025_BR <-  T025 %>% 
