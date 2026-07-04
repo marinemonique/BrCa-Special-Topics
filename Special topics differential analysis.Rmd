@@ -18,7 +18,7 @@ Genes with an average read count > 10 in all samples were selected for diffe
 ```{r}
 
 signif_genes <- Velde_T025_vs_DMSO_1uM_24h %>%
-  filter(baseMean > 10, log2FoldChange > 1) |> 
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
   as.data.frame() %>% 
   na.omit() %>% 
   #rownames_to_column("GeneID") %>% 
@@ -26,13 +26,14 @@ signif_genes <- Velde_T025_vs_DMSO_1uM_24h %>%
   filter(padj<0.05)
 
 volc_data <- Velde_T025_vs_DMSO_1uM_24h %>% 
-  filter(baseMean > 10, log2FoldChange > 1) |>
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
   as.data.frame() %>% 
   na.omit()
 
 ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
   geom_point() +
-  geom_point(data = signif_genes, color="red")
+  geom_point(data = signif_genes, color="red")+
+  theme_bw()
 ```
 
 The number of IR events in a sample was determined based on introns with an IR ratio > 0.1 and meeting the filtering criteria described above. 
