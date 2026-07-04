@@ -1,0 +1,37 @@
+---
+title: "Special Topics Differential analysis"
+author: "Monique White"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+
+Velde_T025_vs_DMSO_1uM_24h <- read_csv("T025_vs_DMSO_1uM_24h(in).csv")
+```
+
+Genes with an average read count > 10 in all samples were selected for differential gene expression analysis (n = 23,072). Genes with an absolute log2 fold change > 1 and FDR-adjusted p < 0.05 were considered significant. 
+
+```{r}
+
+signif_genes <- Velde_T025_vs_DMSO_1uM_24h %>%
+  filter(baseMean > 10, log2FoldChange > 1) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.05)
+
+volc_data <- Velde_T025_vs_DMSO_1uM_24h %>% 
+  filter(baseMean > 10, log2FoldChange > 1) |>
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = signif_genes, color="red")
+```
+
