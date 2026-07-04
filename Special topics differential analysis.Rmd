@@ -35,3 +35,70 @@ ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) +
   geom_point(data = signif_genes, color="red")
 ```
 
+The number of IR events in a sample was determined based on introns with an IR ratio > 0.1 and meeting the filtering criteria described above. 
+
+```{r}
+library(data.table)
+
+# Set the folder once
+data_dir <- "C:/Users/Monique/OneDrive/Documents/SC5901 Biomedicine Lab/BrCa.Data"
+
+files <- c(
+  "30nM"  = file.path(data_dir, "30nM_vs_0nM.txt"),
+  "100nM" = file.path(data_dir, "100nM_vs_0nM.txt"),
+  "300nM" = file.path(data_dir, "300nM_vs_0nM.txt")
+)
+
+read_irfinder <- function(path, label) {
+  dt <- fread(path, skip = 2, header = TRUE, sep = "\t")   # <-- use path, not a fixed string
+  dt[, c("GeneName", "GeneID", "IntronType") := tstrsplit(`Intron-GeneName/GeneID`, "/", fixed = TRUE, keep = 1:3)]
+  dt[, Comparison := label]
+  dt
+}
+
+ir_list <- Map(read_irfinder, files, names(files))
+ir_all <- rbindlist(ir_list, use.names = TRUE, fill = TRUE)
+
+head(ir_all)
+table(ir_all$Comparison)
+```
+
+```{r}
+ir_all |> 
+  filter(`p-increased` < 0.05 | `p-decreased` < 0.05) #filters from 22,072 to 56,785
+
+ir_all |> 
+  filter(`B-IRratio`>0.1, `p-increased` < 0.05 | `p-decreased` < 0.05) #1,457
+
+
+ir_all |> 
+  filter(Comparison == "30nM",
+         `p-increased` < 0.05 | `p-decreased` < 0.05) #2,151 
+
+ir_all |> 
+  filter(Comparison == "100nM",
+         `p-increased` < 0.05 | `p-decreased` < 0.05) #6,978
+
+ir_all |> 
+  filter(Comparison == "300nM",
+         `p-increased` < 0.05 | `p-decreased` < 0.05) #12,943 
+
+## Filtering based on IR ratio
+
+ir_all |> 
+  filter(Comparison == "30nM",
+         `B-IRratio`>0.1,
+         `p-increased` < 0.05 | `p-decreased` < 0.05) #306 
+
+ir_all |> 
+  filter(Comparison == "100nM",
+         `B-IRratio`>0.1,
+         `p-increased` < 0.05 | `p-decreased` < 0.05) #518
+
+ir_all |> 
+  filter(Comparison == "300nM",
+         `B-IRratio`>0.1,
+         `p-increased` < 0.05 | `p-decreased` < 0.05) #633
+```
+
+Seems to be a dose dependent effect there, with more introns
