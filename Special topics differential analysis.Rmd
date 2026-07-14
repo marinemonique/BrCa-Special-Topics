@@ -9,15 +9,21 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 library(readr)
 library(tidyverse)
+library(data.table)
 
-Velde_T025_vs_DMSO_1uM_24h <- read_csv("T025_vs_DMSO_1uM_24h(in).csv")
+Velde_T025_vs_DMSO_1uM_24h <- read_csv("T025_vs_DMSO_1uM_24h(2).csv")
+Velde_T025_vs_DMSO_1uM_24h <- Velde_T025_vs_DMSO_1uM_24h |>
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "1uM",
+    "Study" = "Velde"
+  )
 ```
 
 Genes with an average read count > 10 in all samples were selected for differential gene expression analysis (n = 23,072). Genes with an absolute log2 fold change > 1 and FDR-adjusted p < 0.05 were considered significant. 
 
 ```{r}
-
-signif_genes <- Velde_T025_vs_DMSO_1uM_24h %>%
+significant_velde_genes <- Velde_T025_vs_DMSO_1uM_24h %>%
   filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
   as.data.frame() %>% 
   na.omit() %>% 
@@ -32,17 +38,15 @@ volc_data <- Velde_T025_vs_DMSO_1uM_24h %>%
 
 ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
   geom_point() +
-  geom_point(data = signif_genes, color="red")+
+  geom_point(data = significant_velde_genes, color="red")+
   theme_bw()
 ```
 
 The number of IR events in a sample was determined based on introns with an IR ratio > 0.1 and meeting the filtering criteria described above. 
 
-```{r}
-library(data.table)
-
+```{r eval = FALSE}
 # Set the folder once
-data_dir <- "C:/Users/Monique/OneDrive/Documents/SC5901 Biomedicine Lab/BrCa.Data"
+data_dir <- "C:/Users/Monique/OneDrive/Documents/SC5901 Biomedicine Lab/BrCa.Data/BrCa-Special-Topics"
 
 files <- c(
   "30nM"  = file.path(data_dir, "30nM_vs_0nM.txt"),
@@ -100,6 +104,402 @@ ir_all |>
   filter(Comparison == "300nM",
          `B-IRratio`>0.1,
          `p-increased` < 0.05 | `p-decreased` < 0.05) #633
+
+# Filtered dats to compare to other studies
+Iwai_ir_filtered <- ir_all |> filter(`B-IRratio`>0.1,
+         `p-increased` < 0.05 | `p-decreased` < 0.05)
 ```
 
 Seems to be a dose dependent effect there, with more introns
+
+
+
+# Zhu et al
+```{r}
+library(readr)
+CC671_3uM_vs_DMSO_6hr <- read_csv("CC671_3uM_vs_DMSO_6hr.csv")
+CC671_3uM_vs_DMSO_24hr <- read_csv("CC671_3uM_vs_DMSO_24hr.csv")
+CC671_10uM_vs_DMSO_6hr <- read_csv("CC671_10uM_vs_DMSO_6hr.csv")
+CC671_10uM_vs_DMSO_24hr <- read_csv("CC671_10uM_vs_DMSO_24hr.csv")
+
+CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr|>
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "3uM",
+    "Study" = "Zhu"
+  )
+
+CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr |> mutate(
+    "Hours" = 24,
+    "Concentration" = "3uM",
+    "Study" = "Zhu"
+  )
+
+CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr |> mutate(
+    "Hours" = 6,
+    "Concentration" = "10uM",
+    "Study" = "Zhu"
+  )
+
+CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
+    "Hours" = 24,
+    "Concentration" = "10uM",
+    "Study" = "Zhu"
+  )
+```
+
+```{r}
+significant_DE_CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr %>%
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.05)|> 
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "3uM", 
+    "Study" = "Zhu"
+  )
+volc_data <- CC671_3uM_vs_DMSO_6hr %>% 
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_3uM_6hr <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_DE_CC671_3uM_vs_DMSO_6hr, color="red")+
+  theme_bw()+
+  labs(title = "3uM, 6hr")
+```
+
+```{r}
+significant_DE_CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr %>%
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.05)|> 
+  mutate(
+    "Hours" = 24,
+    "Concentration" = "3uM", 
+    "Study" = "Zhu"
+  )
+volc_data <- CC671_3uM_vs_DMSO_24hr %>% 
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_3uM_24hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_DE_CC671_3uM_vs_DMSO_24hr, color="red")+
+  theme_bw()+
+  labs(title = "3uM, 24hr")
+```
+
+```{r}
+significant_DE_CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr %>%
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.05)|> 
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "10uM",
+    "Study" = "Zhu"
+  )
+
+volc_data <- CC671_10uM_vs_DMSO_6hr %>% 
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_10uM_6hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_DE_CC671_10uM_vs_DMSO_6hr, color="red")+
+  theme_bw()+
+  labs(title = "10uM, 6hr")
+```
+
+```{r}
+significant_DE_CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr %>%
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.05) |> 
+  mutate(
+    "Hours" = 24,
+    "Concentration" = "10uM", 
+    "Study" = "Zhu"
+  )
+
+volc_data <- CC671_10uM_vs_DMSO_24hr %>% 
+  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_10uM_24hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_DE_CC671_10uM_vs_DMSO_24hr, color="red")+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank())+
+  labs(title = "10uM, 24hr")
+```
+
+
+```{r}
+library(ggpubr)
+
+ggarrange(volc_plot_3uM_6hr, volc_plot_10uM_6hr, volc_plot_3uM_24hr, volc_plot_10uM_24hr,
+          ncol =2, nrow = 2,
+          labels = c("A", "B", "C", "D"))
+```
+
+```{r}
+Zhu_DE_IR <- bind_rows(significant_DE_CC671_3uM_vs_DMSO_6hr, significant_DE_CC671_3uM_vs_DMSO_24hr, significant_DE_CC671_10uM_vs_DMSO_6hr, significant_DE_CC671_10uM_vs_DMSO_24hr)
+library(dplyr)
+library(stringr)
+
+Zhu_DE_IR <- Zhu_DE_IR %>%
+  mutate(EnsemblID = str_extract(`...1`, "ENSG[0-9]+"))
+
+Zhu_DE_IR <- Zhu_DE_IR %>% rename(intron_id = `...1`)
+
+# how many are repeated
+
+DE_iR_among_treatment_filter <- Zhu_DE_IR |> 
+  group_by(intron_id) |> 
+  summarise(Occurrences = n()) |> 
+  filter(Occurrences > 1) |> 
+  pull(intron_id)
+
+Zhu_DE_IR |> 
+  filter(intron_id %in% DE_iR_among_treatment_filter) |> 
+  arrange(intron_id, Hours)
+```
+
+1. Extract clean Ensembl IDs
+Use R's gsub() or stringr to isolate the Ensembl ID from your string pattern (SAMD11/ENSG00000187634/clean/1:924948-925921:+).
+
+# Example vector of your IRFinder/DESeq2 row names
+raw_ids <- c("SAMD11/ENSG00000187634/clean/1:924948-925921:+")
+
+# Extract the Ensembl ID (matches ENSG followed by numbers)
+clean_genes <- gsub(".*(ENSG[0-9]+).*", "\\1", raw_ids)
+print(clean_genes) 
+# Output: "ENSG00000187634"
+2. Prepare your DESeq2 data
+Filter your DESeq2 results to get your significant genes (e.g., \(p_{\text{adj}} < 0.05\)
+# Load libraries
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db) # Human annotation database
+keytypes(org.Hs.eg.db)  # confirm "ENSEMBL" is listed
+AnnotationDbi::select(org.Hs.eg.db, keys = head(sig_genes, 10),
+                       keytype = "ENSEMBL", columns = "SYMBOL")
+
+sig_genes <- Zhu_DE_IR %>%
+  filter(padj < 0.05) %>%
+  pull(EnsemblID) %>%
+  unique() %>%
+  na.omit()
+
+ego <- enrichGO(
+  gene          = sig_genes,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "ENSEMBL",
+  ont           = "BP",       # or "MF", "CC", "ALL"
+  pAdjustMethod = "BH",
+  #qvalueCutoff  = 0.05,
+  readable      = TRUE
+)
+
+dotplot(ego, showCategory=15)
+
+dotplot(ego, showCategory = 20) + 
+  ggplot2::ggtitle("GO Biological Processes for Intron Retention Targets")
+```
+
+```{r}
+ego_test <- enrichGO(
+     gene          = sig_genes,
+    OrgDb         = org.Hs.eg.db,
+     keyType       = "ENSEMBL",
+     ont           = "BP",
+     pAdjustMethod = "BH",
+     pvalueCutoff  = 1,
+     qvalueCutoff  = 1
+)
+
+nrow(as.data.frame(ego_test))
+
+head(as.data.frame(ego_test)[, c("Description", "pvalue", "p.adjust", "Count")])
+#                                                                     Description      pvalue  p.adjust Count
+# GO:1901072                    glucosamine-containing compound catabolic process 0.005610739 0.1330355     1
+# GO:0034145        positive regulation of toll-like receptor 4 signaling pathway 0.007846944 0.1330355     1
+# GO:0046348                                        amino sugar catabolic process 0.007846944 0.1330355     1
+# GO:0007601                                                    visual perception 0.007906551 0.1330355     2
+# GO:0050953                                 sensory perception of light stimulus 0.008159344 0.1330355     2
+# GO:1901533 negative regulation of hematopoietic progenitor cell differentiation 0.008405274 0.1330355     1
+library(clusterProfiler)
+library(org.Hs.eg.db) # Human annotation database
+# > keytypes(org.Hs.eg.db)  # confirm "ENSEMBL" is listed
+#  [1] "ACCNUM"       "ALIAS"        "ENSEMBL"      "ENSEMBLPROT"  "ENSEMBLTRANS" "ENTREZID"     "ENZYME"       "EVIDENCE"    
+#  [9] "EVIDENCEALL"  "GENENAME"     "GENETYPE"     "GO"           "GOALL"        "IPI"          "MAP"          "OMIM"        
+# [17] "ONTOLOGY"     "ONTOLOGYALL"  "PATH"         "PFAM"         "PMID"         "PROSITE"      "REFSEQ"       "SYMBOL"      
+# [25] "UCSCKG"       "UNIPROT"     
+AnnotationDbi::select(org.Hs.eg.db, keys = head(sig_genes, 10),
+                        keytype = "ENSEMBL", columns = "SYMBOL")
+ 
+sig_genes <- Zhu_DE_IR %>%
+   filter(padj < 0.05) %>%
+   pull(EnsemblID) %>%
+   unique() %>%
+   na.omit()
+ 
+ ego <- enrichGO(
+   gene          = sig_genes,
+   OrgDb         = org.Hs.eg.db,
+   keyType       = "ENSEMBL",
+   ont           = "BP",       # or "MF", "CC", "ALL"
+   pAdjustMethod = "BH",
+   #qvalueCutoff  = 0.05,
+   readable      = TRUE
+)
+
+dotplot(ego_test, showCategory=15)
+
+```
+
+```{r}
+combined_data <- bind_rows(significant_DE_CC671_10uM_vs_DMSO_24hr, significant_DE_CC671_10uM_vs_DMSO_6hr, significant_DE_CC671_3uM_vs_DMSO_24hr, significant_DE_CC671_3uM_vs_DMSO_6hr, significant_velde_genes)
+
+combined_data <- combined_data |> 
+  mutate(EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
+         intron_id = `...1`) 
+  
+```
+
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db) # Human annotation database
+keytypes(org.Hs.eg.db)  # confirm "ENSEMBL" is listed
+AnnotationDbi::select(org.Hs.eg.db, keys = head(sig_genes, 10),
+                       keytype = "ENSEMBL", columns = "SYMBOL")
+
+combined_sig_genes <- combined_data %>%
+  filter(padj < 0.05) %>%
+  pull(EnsemblID) %>%
+  unique() %>%
+  na.omit()
+
+ego_test <- enrichGO(
+     gene          = combined_sig_genes,
+    OrgDb         = org.Hs.eg.db,
+     keyType       = "ENSEMBL",
+     ont           = "BP",
+     pAdjustMethod = "BH",
+     pvalueCutoff  = 1,
+     qvalueCutoff  = 1
+)
+
+nrow(as.data.frame(ego_test))
+
+head(as.data.frame(ego_test)[, c("Description", "pvalue", "p.adjust", "Count")])
+#                                                                     Description      pvalue  p.adjust Count
+# GO:1901072                    glucosamine-containing compound catabolic process 0.005610739 0.1330355     1
+# GO:0034145        positive regulation of toll-like receptor 4 signaling pathway 0.007846944 0.1330355     1
+# GO:0046348                                        amino sugar catabolic process 0.007846944 0.1330355     1
+# GO:0007601                                                    visual perception 0.007906551 0.1330355     2
+# GO:0050953                                 sensory perception of light stimulus 0.008159344 0.1330355     2
+# GO:1901533 negative regulation of hematopoietic progenitor cell differentiation 0.008405274 0.1330355     1
+
+# > keytypes(org.Hs.eg.db)  # confirm "ENSEMBL" is listed
+#  [1] "ACCNUM"       "ALIAS"        "ENSEMBL"      "ENSEMBLPROT"  "ENSEMBLTRANS" "ENTREZID"     "ENZYME"       "EVIDENCE"    
+#  [9] "EVIDENCEALL"  "GENENAME"     "GENETYPE"     "GO"           "GOALL"        "IPI"          "MAP"          "OMIM"        
+# [17] "ONTOLOGY"     "ONTOLOGYALL"  "PATH"         "PFAM"         "PMID"         "PROSITE"      "REFSEQ"       "SYMBOL"      
+# [25] "UCSCKG"       "UNIPROT"     
+AnnotationDbi::select(org.Hs.eg.db, keys = head(combined_sig_genes, 10),
+                        keytype = "ENSEMBL", columns = "SYMBOL")
+ 
+dotplot(ego_test, showCategory=15)
+
+ego_df <- as.data.frame(ego_test)
+```
+
+```{r}
+cg <- compareCluster(
+  EnsemblID ~ Study,
+  data          = combined_data,
+  fun           = "enrichGO",
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "ENSEMBL",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 1,
+  qvalueCutoff  = 1
+)
+
+cg_df <- as.data.frame(cg)
+head(cg_df)
+
+dotplot(cg)
+```
+
+
+# Intron Retention
+
+```{r}
+IR_quantification <- read.delim("IR_summary_all_samples.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+library(readxl)
+metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
+
+IR_quantification <- inner_join(
+  IR_quantification, 
+  metadata_sc5903_mw, 
+  by = c("Sample" = "Irfinder file")
+)
+```
+
+```{r}
+IR_quantification |> 
+  ggplot(aes(x= `Sequencing depth (FASTQC)`, y = Mean_IR_ratio, colour = Therapy)) + 
+  geom_point()+
+  facet_wrap(~Study)+
+  theme_bw()
+```
+What I observe here is that DMSO (Control) typically has lower mean IR ratio than ones treated with the disease. Suggests that drugs work.
+
+```{r}
+IR_quantification |> 
+  ggplot(aes(x= N_reliable_introns, y = Mean_IR_ratio, colour = Therapy, shape = Study)) + 
+  geom_point()+
+  theme_bw()
+```
+
+Doesn't appear to be strong correlation between number of reliable introns and the mean IR ratio
+
+```{r}
+IR_quantification |> 
+  ggplot(aes(y= N_reliable_introns, x = `Sequencing depth (FASTQC)`, colour = Therapy, shape = Study)) + 
+  geom_point()+
+  theme_bw()
+```
+Number of reliable introns seems to be more dependant on the study rather than on the sequencing depth... 
+
+
+```{r}
+IR_quantification |> 
+  filter(Therapy != c("0.1% DMSO", "DMSO")) |> 
+  ggplot(aes(x= Median_IR_ratio, y = Mean_IR_ratio, colour = Hours, shape = Study)) + 
+  geom_point()+
+  theme_bw()
+```
+
