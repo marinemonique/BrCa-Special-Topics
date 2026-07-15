@@ -10,13 +10,48 @@ knitr::opts_chunk$set(echo = TRUE)
 library(readr)
 library(tidyverse)
 library(data.table)
+library(ggpubr)
+library(clusterProfiler)
+library(org.Hs.eg.db) # Human annotation database
 
+## Velde et al. 2025
 Velde_T025_vs_DMSO_1uM_24h <- read_csv("T025_vs_DMSO_1uM_24h(2).csv")
 Velde_T025_vs_DMSO_1uM_24h <- Velde_T025_vs_DMSO_1uM_24h |>
   mutate(
     "Hours" = 6,
     "Concentration" = "1uM",
     "Study" = "Velde"
+  )
+
+## Zhu et al. 2018 Data
+CC671_3uM_vs_DMSO_6hr <- read_csv("CC671_3uM_vs_DMSO_6hr.csv")
+CC671_3uM_vs_DMSO_24hr <- read_csv("CC671_3uM_vs_DMSO_24hr.csv")
+CC671_10uM_vs_DMSO_6hr <- read_csv("CC671_10uM_vs_DMSO_6hr.csv")
+CC671_10uM_vs_DMSO_24hr <- read_csv("CC671_10uM_vs_DMSO_24hr.csv")
+
+CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr|>
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "3uM",
+    "Study" = "Zhu"
+  )
+
+CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr |> mutate(
+    "Hours" = 24,
+    "Concentration" = "3uM",
+    "Study" = "Zhu"
+  )
+
+CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr |> mutate(
+    "Hours" = 6,
+    "Concentration" = "10uM",
+    "Study" = "Zhu"
+  )
+
+CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
+    "Hours" = 24,
+    "Concentration" = "10uM",
+    "Study" = "Zhu"
   )
 ```
 
@@ -115,38 +150,6 @@ Seems to be a dose dependent effect there, with more introns
 
 
 # Zhu et al
-```{r}
-library(readr)
-CC671_3uM_vs_DMSO_6hr <- read_csv("CC671_3uM_vs_DMSO_6hr.csv")
-CC671_3uM_vs_DMSO_24hr <- read_csv("CC671_3uM_vs_DMSO_24hr.csv")
-CC671_10uM_vs_DMSO_6hr <- read_csv("CC671_10uM_vs_DMSO_6hr.csv")
-CC671_10uM_vs_DMSO_24hr <- read_csv("CC671_10uM_vs_DMSO_24hr.csv")
-
-CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr|>
-  mutate(
-    "Hours" = 6,
-    "Concentration" = "3uM",
-    "Study" = "Zhu"
-  )
-
-CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr |> mutate(
-    "Hours" = 24,
-    "Concentration" = "3uM",
-    "Study" = "Zhu"
-  )
-
-CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr |> mutate(
-    "Hours" = 6,
-    "Concentration" = "10uM",
-    "Study" = "Zhu"
-  )
-
-CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
-    "Hours" = 24,
-    "Concentration" = "10uM",
-    "Study" = "Zhu"
-  )
-```
 
 ```{r}
 significant_DE_CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr %>%
@@ -253,8 +256,6 @@ volc_plot_10uM_24hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj)
 
 
 ```{r}
-library(ggpubr)
-
 ggarrange(volc_plot_3uM_6hr, volc_plot_10uM_6hr, volc_plot_3uM_24hr, volc_plot_10uM_24hr,
           ncol =2, nrow = 2,
           labels = c("A", "B", "C", "D"))
@@ -297,8 +298,7 @@ print(clean_genes)
 Filter your DESeq2 results to get your significant genes (e.g., \(p_{\text{adj}} < 0.05\)
 # Load libraries
 ```{r}
-library(clusterProfiler)
-library(org.Hs.eg.db) # Human annotation database
+
 keytypes(org.Hs.eg.db)  # confirm "ENSEMBL" is listed
 AnnotationDbi::select(org.Hs.eg.db, keys = head(sig_genes, 10),
                        keytype = "ENSEMBL", columns = "SYMBOL")
@@ -381,8 +381,13 @@ combined_data <- bind_rows(significant_DE_CC671_10uM_vs_DMSO_24hr, significant_D
 
 combined_data <- combined_data |> 
   mutate(EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
-         intron_id = `...1`) 
-  
+         intron_id = `...1`,
+    direction = case_when(
+      log2FoldChange > 0 ~ "upregulated",
+      log2FoldChange < 0 ~ "downregulated",
+      TRUE ~ "no change"
+    )
+  )
 ```
 
 
@@ -451,6 +456,25 @@ head(cg_df)
 
 dotplot(cg)
 ```
+```{r}
+cg <- compareCluster(
+  EnsemblID ~ Study*direction,
+  data          = combined_data,
+  fun           = "enrichGO",
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "ENSEMBL",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 1,
+  qvalueCutoff  = 1
+)
+
+cg_df <- as.data.frame(cg)
+head(cg_df)
+
+dotplot(cg)+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+```
 
 
 # Intron Retention
@@ -470,9 +494,9 @@ IR_quantification <- inner_join(
 
 ```{r}
 IR_quantification |> 
-  ggplot(aes(x= `Sequencing depth (FASTQC)`, y = Mean_IR_ratio, colour = exp_design)) + 
+  ggplot(aes(x= log(`Sequencing depth (FASTQC)`), y = Mean_IR_ratio, colour = exp_design)) + 
   geom_point()+
-  facet_wrap(~Study)+
+  facet_wrap(~Study, ncol =1)+
   theme_bw()
 ```
 What I observe here is that DMSO (Control) typically has lower mean IR ratio than ones treated with the disease. Suggests that drugs work.
@@ -489,7 +513,7 @@ Doesn't appear to be strong correlation between number of reliable introns and t
 
 ```{r}
 IR_quantification |> 
-  ggplot(aes(y= N_reliable_introns, x = `Sequencing depth (FASTQC)`, shape = exp_design, colour = Study)) + 
+  ggplot(aes(y= N_reliable_introns, x = log(`Sequencing depth (FASTQC)`), shape = exp_design, colour = Study)) + 
   geom_point()+
   theme_bw()+
   labs(shape = "Treatment",
@@ -506,6 +530,55 @@ IR_quantification |>
   theme_bw()+
   labs(x = "Median IR ratio",
        y= "Mean IR ratio")
+```
+
+
+## Compare intron retention among controls
+
+```{r}
+IR_quantification |> 
+  filter(exp_design == "Control") |> 
+  ggplot(aes(x=log(`Sequencing depth (FASTQC)`), y=Mean_IR_ratio, colour = `Cell line`))+
+  geom_point()+
+  theme_bw()
+```
+```{r}
+IR_quantification |> 
+  filter(exp_design == "Control") |> 
+  ggplot(aes(x=N_reliable_introns, y=Mean_IR_ratio, colour = `Cell line`))+
+  geom_point(size =3)+
+  theme_bw()+
+  labs(y= "Mean IR ratio",
+       x = "Reliable introns")
+```
+```{r}
+IR_quantification |> 
+  filter(exp_design == "Treatment") |> 
+  ggplot(aes(x=N_reliable_introns, y=Mean_IR_ratio, colour = Therapy, shape = `Cell line`))+
+  geom_point(size = 3)+
+  theme_bw()+
+  labs(y= "Mean IR ratio",
+       x = "Reliable introns")
+```
+
+```{r}
+IR_quantification |> 
+  ggplot(aes(x=N_reliable_introns, y=Mean_IR_ratio, colour = `Cell line`))+
+  geom_point(size = 3)+
+  theme_bw()+
+  labs(y= "Mean IR ratio",
+       x = "Reliable introns")+
+  facet_wrap(~exp_design)
+```
+
+```{r}
+IR_quantification |> 
+  ggplot(aes(x=N_reliable_introns, y=Mean_IR_ratio, colour = `Cell line`, shape = exp_design))+
+  geom_point(size = 3)+
+  theme_bw()+
+  labs(y= "Mean IR ratio",
+       x = "Reliable introns")+
+  facet_grid(exp_design~Hours)
 ```
 
 
@@ -553,3 +626,13 @@ Velde_T025_vs_DMSO_1uM_24h |> filter(GeneSymbol %in% c("RPS6KB1", "BCLAF1"))
 ```
 
 Appears that neither have exon intron retention that is significantly changed.
+
+You'd have to run the following from the same star2 aligned bams:
+
+A) SpliceWiz 
+   - IR-ratio quantification (your main focus) 
+   - PSI values for skipped-exon (SE) events. Specifically I need PSI per sample/group for RPS6KB1 exon 7 and BCLAF1 exon 11 
+
+PSI values for skipped-exon (SE) events. Specifically I need PSI per sample/group for RPS6KB1 exon 7 and BCLAF1 exon 11 
+
+B) featureCounts + DESeq2 - standard gene-level differential expression, DMSO vs each T-025 dose. This is a separate question from splicing: I want to check whether stress response genes (CDKN1A, DDIT3, FOS, EGR1 ect) are already induced at these doses/timepoint, or whether they stay flat. Splicing tools won't answer this it needs the gene-level expression comparison.
