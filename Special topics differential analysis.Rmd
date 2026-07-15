@@ -470,7 +470,7 @@ IR_quantification <- inner_join(
 
 ```{r}
 IR_quantification |> 
-  ggplot(aes(x= `Sequencing depth (FASTQC)`, y = Mean_IR_ratio, colour = Therapy)) + 
+  ggplot(aes(x= `Sequencing depth (FASTQC)`, y = Mean_IR_ratio, colour = exp_design)) + 
   geom_point()+
   facet_wrap(~Study)+
   theme_bw()
@@ -479,18 +479,21 @@ What I observe here is that DMSO (Control) typically has lower mean IR ratio tha
 
 ```{r}
 IR_quantification |> 
-  ggplot(aes(x= N_reliable_introns, y = Mean_IR_ratio, colour = Therapy, shape = Study)) + 
+  ggplot(aes(x= N_reliable_introns, y = Mean_IR_ratio, colour = exp_design, shape = Study)) + 
   geom_point()+
-  theme_bw()
+  theme_bw()+
+  labs(colour = "Treatment")
 ```
 
 Doesn't appear to be strong correlation between number of reliable introns and the mean IR ratio
 
 ```{r}
 IR_quantification |> 
-  ggplot(aes(y= N_reliable_introns, x = `Sequencing depth (FASTQC)`, colour = Therapy, shape = Study)) + 
+  ggplot(aes(y= N_reliable_introns, x = `Sequencing depth (FASTQC)`, shape = exp_design, colour = Study)) + 
   geom_point()+
-  theme_bw()
+  theme_bw()+
+  labs(shape = "Treatment",
+       y = "Reliable introns")
 ```
 Number of reliable introns seems to be more dependant on the study rather than on the sequencing depth... 
 
@@ -500,6 +503,53 @@ IR_quantification |>
   filter(Therapy != c("0.1% DMSO", "DMSO")) |> 
   ggplot(aes(x= Median_IR_ratio, y = Mean_IR_ratio, colour = Hours, shape = Study)) + 
   geom_point()+
-  theme_bw()
+  theme_bw()+
+  labs(x = "Median IR ratio",
+       y= "Mean IR ratio")
 ```
 
+
+##Saloni
+```{r}
+combined_zhu <- bind_rows(CC671_3uM_vs_DMSO_6hr, CC671_3uM_vs_DMSO_24hr, CC671_10uM_vs_DMSO_6hr, CC671_10uM_vs_DMSO_24hr)
+
+combined_zhu <- combined_zhu |> 
+  separate(
+    `...1`,
+    into = c("GeneSymbol", "EnsemblID", "Status", "Coords"),
+    sep = "/",
+    remove = FALSE  # keeps the original ...1 column
+  )
+```
+
+### Looking at RPS6KB1 exon 7
+
+ENSG00000108443
+
+```{r}
+combined_zhu |> filter(GeneSymbol %in% c("RPS6KB1", "BCLAF1"))
+```
+RPS20/ENSG00000008988/clean/8:56069833-56073116:-
+exits in the Velde data, but doesn't look like anu other
+
+### BCLAF1 exon 11
+ENSG00000029363
+```{r}
+combined_data |> filter(EnsemblID == "ENSG00000029363")
+```
+In the combined data, neither of these had these genes differential expressed between treatments.
+
+```{r}
+Velde_T025_vs_DMSO_1uM_24h <- Velde_T025_vs_DMSO_1uM_24h |> 
+  separate(
+    `...1`,
+    into = c("GeneSymbol", "EnsemblID", "Status", "Coords"),
+    sep = "/",
+    remove = FALSE  # keeps the original ...1 column
+  )
+
+Velde_T025_vs_DMSO_1uM_24h |> filter(GeneSymbol %in% c("RPS6KB1", "BCLAF1"))
+
+```
+
+Appears that neither have exon intron retention that is significantly changed.
