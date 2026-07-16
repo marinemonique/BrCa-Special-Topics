@@ -390,6 +390,18 @@ combined_data <- combined_data |>
   )
 ```
 
+```{r}
+shared_de_ir <- combined_data |> group_by(intron_id) |>
+  summarise(count = n_distinct(Study)) |> 
+  filter(count > 1) |> 
+  pull(intron_id)
+
+combined_data |> filter(intron_id %in% shared_de_ir) |> 
+```
+
+Look into these 6 
+
+
 
 ```{r}
 library(clusterProfiler)
