@@ -24,10 +24,16 @@ Velde_T025_vs_DMSO_1uM_24h <- Velde_T025_vs_DMSO_1uM_24h |>
   )
 
 ## Zhu et al. 2018 Data
-CC671_3uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/CC671_3uM_vs_DMSO_6hr.csv")
-CC671_3uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/CC671_3uM_vs_DMSO_24hr.csv")
-CC671_10uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/CC671_10uM_vs_DMSO_6hr.csv")
-CC671_10uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/CC671_10uM_vs_DMSO_24hr.csv")
+CC671_3uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/6hr/CC671_3uM_vs_DMSO_6hr.csv")
+CC671_3uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/24hr/CC671_3uM_vs_DMSO_24hr.csv")
+CC671_10uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/6hr/CC671_10uM_vs_DMSO_6hr.csv")
+CC671_10uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/24hr/CC671_10uM_vs_DMSO_24hr.csv")
+
+#Pooled meaning that the IR filtering was calculated on a global list where the intron had to be present in 50% of all 16 samples...
+# CC671_3uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/CC671_3uM_vs_DMSO_6hr.csv")
+# CC671_3uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/CC671_3uM_vs_DMSO_24hr.csv")
+# CC671_10uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/CC671_10uM_vs_DMSO_6hr.csv")
+# CC671_10uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/CC671_10uM_vs_DMSO_24hr.csv")
 
 CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr|>
   mutate(
@@ -54,6 +60,9 @@ CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
     "Study" = "Zhu"
   )
 ```
+
+Not entirely sure why al of these have 5661 observations... i think they should be different?
+
 
 Genes with an average read count > 10 in all samples were selected for differential gene expression analysis (n = 23,072). Genes with an absolute log2 fold change > 1 and FDR-adjusted p < 0.05 were considered significant. 
 
@@ -83,19 +92,21 @@ The number of IR events in a sample was determined based on introns with an IR r
 
 ```{r}
 significant_DE_CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr %>%
-  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
   as.data.frame() %>% 
   na.omit() %>% 
   #rownames_to_column("GeneID") %>% 
   arrange(padj) %>% 
-  filter(padj<0.05)|> 
+  filter(padj<0.01)|> 
   mutate(
     "Hours" = 6,
     "Concentration" = "3uM", 
     "Study" = "Zhu"
   )
 volc_data <- CC671_3uM_vs_DMSO_6hr %>% 
-  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
+  filter(baseMean > 10 #, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
   as.data.frame() %>% 
   na.omit()
 
@@ -104,23 +115,23 @@ volc_plot_3uM_6hr <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj))
   geom_point(data = significant_DE_CC671_3uM_vs_DMSO_6hr, color="red")+
   theme_bw()+
   labs(title = "3uM, 6hr")
-```
 
-```{r}
 significant_DE_CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr %>%
-  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
   as.data.frame() %>% 
   na.omit() %>% 
   #rownames_to_column("GeneID") %>% 
   arrange(padj) %>% 
-  filter(padj<0.05)|> 
+  filter(padj<0.01)|> 
   mutate(
     "Hours" = 24,
     "Concentration" = "3uM", 
     "Study" = "Zhu"
   )
 volc_data <- CC671_3uM_vs_DMSO_24hr %>% 
-  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
+  filter(baseMean > 10 #, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
   as.data.frame() %>% 
   na.omit()
 
@@ -129,16 +140,14 @@ volc_plot_3uM_24hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))
   geom_point(data = significant_DE_CC671_3uM_vs_DMSO_24hr, color="red")+
   theme_bw()+
   labs(title = "3uM, 24hr")
-```
 
-```{r}
 significant_DE_CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr %>%
-  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
   as.data.frame() %>% 
   na.omit() %>% 
   #rownames_to_column("GeneID") %>% 
   arrange(padj) %>% 
-  filter(padj<0.05)|> 
+  filter(padj<0.01)|> 
   mutate(
     "Hours" = 6,
     "Concentration" = "10uM",
@@ -146,7 +155,9 @@ significant_DE_CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr %>%
   )
 
 volc_data <- CC671_10uM_vs_DMSO_6hr %>% 
-  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
+  filter(baseMean > 10#, 
+         #log2FoldChange > 3 | log2FoldChange < -3
+         ) |>
   as.data.frame() %>% 
   na.omit()
 
@@ -155,16 +166,15 @@ volc_plot_10uM_6hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))
   geom_point(data = significant_DE_CC671_10uM_vs_DMSO_6hr, color="red")+
   theme_bw()+
   labs(title = "10uM, 6hr")
-```
 
-```{r}
+
 significant_DE_CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr %>%
-  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
   as.data.frame() %>% 
   na.omit() %>% 
   #rownames_to_column("GeneID") %>% 
   arrange(padj) %>% 
-  filter(padj<0.05) |> 
+  filter(padj<0.01) |> 
   mutate(
     "Hours" = 24,
     "Concentration" = "10uM", 
@@ -172,7 +182,9 @@ significant_DE_CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr %>%
   )
 
 volc_data <- CC671_10uM_vs_DMSO_24hr %>% 
-  filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |>
+  filter(baseMean > 10#, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
   as.data.frame() %>% 
   na.omit()
 
@@ -239,12 +251,13 @@ combined_data <- combined_data |>
 shared_de_ir <- combined_data |> group_by(intron_id) |>
   summarise(count = n_distinct(Study)) |> 
   filter(count > 1) |> 
-  pull(intron_id) #760 targets are shared
+  pull(intron_id) #653 targets are shared
 
 combined_data |> filter(intron_id %in% shared_de_ir) |> write.csv(file = "shared_de_ir.csv")
 ```
 
 Look into these 6 
+
 # Gene ontology
 
 
@@ -340,8 +353,6 @@ dotplot(ego_test, showCategory=15)
 
 
 
-
-
 ```{r}
 library(clusterProfiler)
 library(org.Hs.eg.db) # Human annotation database
@@ -388,6 +399,8 @@ dotplot(ego_test, showCategory=15)
 
 ego_df <- as.data.frame(ego_test)
 ```
+
+## Comparing among studies
 
 ```{r}
 cg <- compareCluster(
@@ -604,3 +617,41 @@ A) SpliceWiz
 PSI values for skipped-exon (SE) events. Specifically I need PSI per sample/group for RPS6KB1 exon 7 and BCLAF1 exon 11 
 
 B) featureCounts + DESeq2 - standard gene-level differential expression, DMSO vs each T-025 dose. This is a separate question from splicing: I want to check whether stress response genes (CDKN1A, DDIT3, FOS, EGR1 ect) are already induced at these doses/timepoint, or whether they stay flat. Splicing tools won't answer this it needs the gene-level expression comparison.
+
+# Differential gene expression
+
+```{r}
+Velde_gene_de_T025_DMSO <- read_csv("deseq_gene/deseq2_results/ERP171667/T025_vs_DMSO.csv")
+Velde_gene_de_T025_DMSO <- Velde_gene_de_T025_DMSO |> 
+  mutate(
+    "EnsemblID" = `...1`,
+    "Contrast" = "T025_vs_DMSO",
+    "Study" = "Velde")
+
+Zhu_gene_de_CC671_3uM_vs_DMSO <- read_csv("deseq_gene/deseq2_results/SRP141379/CC671_3uM_vs_DMSO.csv")
+Zhu_gene_de_CC671_3uM_vs_DMSO <- Zhu_gene_de_CC671_3uM_vs_DMSO |> 
+  mutate(
+    "EnsemblID" = `...1`,
+    "Contrast" = "CC671_3uM_vs_DMSO",
+    "Study" = "Zhu")
+
+Zhu_gene_de_CC671_10uM_vs_DMSO <- read_csv("deseq_gene/deseq2_results/SRP141379/CC671_10uM_vs_DMSO.csv")
+Zhu_gene_de_CC671_10uM_vs_DMSO <- Zhu_gene_de_CC671_10uM_vs_DMSO |> 
+  mutate(
+    "EnsemblID" = `...1`,
+    "Contrast" = "CC671_10uM_vs_DMSO",
+    "Study" = "Zhu")
+
+combined_gene_de <- bind_rows(Velde_gene_de_T025_DMSO, Zhu_gene_de_CC671_3uM_vs_DMSO, Zhu_gene_de_CC671_10uM_vs_DMSO)
+
+Genes_differentially_expressed_filter <- combined_gene_de |> 
+  group_by(EnsemblID) |> 
+  summarise(n = n_distinct(Contrast)) |> 
+  filter(n > 1) |> 
+  pull(EnsemblID)
+```
+
+From this I can identify which genes are differentially expressed between controls and treatment.
+
+I can then compare this to intron retention events.
+Question for Ulf - shouldn't that already be accounted for the expression levels?
