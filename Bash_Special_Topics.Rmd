@@ -1,0 +1,2484 @@
+---
+title: "Special Topics Bash Code"
+author: "Monique White"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Bash code
+
+## Download data
+```
+#!/usr/bin/env bash
+# =============================================================================
+# Master FASTQ download script
+# Studies: SRP112607 (4 runs), SRP141379 (128 runs), E-MTAB-14664 (6 runs)
+# Total: 138 runs — FTP paths are fetched live from ENA API at runtime
+# Resumable: re-run to skip completed files and resume partial transfers
+# Integrity-checked: gzip-tested after download, MD5 verified at the end
+# =============================================================================
+
+set -euo pipefail
+
+BASE_DIR="/data/moniquew/BrCa-Special-Topics/raw_data"
+LOG_DIR="/data/moniquew/BrCa-Special-Topics/logs"
+mkdir -p "$LOG_DIR"
+
+# =============================================================================
+# Core helpers
+# =============================================================================
+
+_is_complete() {
+  local f="$1"
+  [ -s "$f" ] || return 1
+  [ -f "$f.done" ] && [ ! "$f" -nt "$f.done" ] && return 0
+  case "$f" in
+  *.gz) gzip -t "$f" 2>/dev/null ;;
+*) return 0 ;;
+esac
+}
+
+_human() { numfmt --to=iec --suffix=B --format='%.1f' "$1" 2>/dev/null || echo "${1}B"; }
+
+_done_count=0
+_total_count=0
+
+download_one() {
+  local url="$1" out="$2" expected="${3:-0}"
+  _done_count=$((_done_count + 1))
+  local prefix="[$_done_count/$_total_count] $(basename $out)"
+  local sz=0
+  [ -f "$out" ] && sz=$(stat -c %s "$out" 2>/dev/null || echo 0)
+  local sz_msg=""
+  [ "$expected" -gt 0 ] && sz_msg=" ($(_human $sz) / $(_human $expected))"
+  printf '%s: checking%s... ' "$prefix" "$sz_msg" >&2
+  
+  if [ "$expected" -gt 0 ] && [ "$sz" -gt "$expected" ]; then
+  echo "oversized, redownloading" >&2
+  rm -f "$out" "$out.done"
+  elif _is_complete "$out"; then
+  : > "$out.done"
+  echo "valid, skip" >&2
+  return 0
+  elif [ "$sz" -gt 0 ]; then
+  echo "partial, resuming" >&2
+  rm -f "$out.done"
+  wget -c -q --show-progress --tries=10 --timeout=60 --retry-connrefused -O "$out" "$url" || true
+  if _is_complete "$out"; then
+  : > "$out.done"
+  echo "$prefix: resumed OK" >&2
+  return 0
+  fi
+  echo "$prefix: WARN integrity check failed after resume; redownloading from scratch" >&2
+  rm -f "$out" "$out.done"
+  else
+    echo "missing, downloading" >&2
+  rm -f "$out.done"
+  fi
+  
+  mkdir -p "${out%/*}"
+  wget -q --show-progress --tries=10 --timeout=60 --retry-connrefused -O "$out" "$url"
+  _is_complete "$out" || {
+    echo "$prefix: ERR corrupted after download (re-run script)" >&2
+    rm -f "$out" "$out.done"
+    return 1
+  }
+  : > "$out.done"
+  echo "$prefix: done" >&2
+}
+
+# Fetch FTP paths + MD5 + sizes from ENA API for a given accession
+# Prints: run_accession <TAB> ftp_url1;ftp_url2 <TAB> md5_1;md5_2 <TAB> bytes_1;bytes_2
+fetch_ena_info() {
+  local accession="$1"
+  curl -sS --retry 5 --retry-delay 3 \
+  "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=${accession}&result=read_run&fields=run_accession,fastq_ftp,fastq_md5,fastq_bytes&format=tsv" \
+  | tail -n +2   # strip header
+}
+
+# =============================================================================
+# Download one study worth of runs
+# Arguments: study_id  base_subdir  [list of run accessions...]
+# =============================================================================
+download_study() {
+  local study="$1"
+  local subdir="$2"
+  shift 2
+  local runs=("$@")
+  
+  echo ""
+  echo "============================================================"
+  echo "  Study: $study  (${#runs[@]} runs)"
+  echo "  Output: $BASE_DIR/$subdir"
+  echo "============================================================"
+  
+  # Collect all file info up front
+  declare -a all_urls all_outs all_sizes all_md5s
+  all_urls=(); all_outs=(); all_sizes=(); all_md5s=()
+  
+  echo "Querying ENA API for FTP paths..." >&2
+  for run in "${runs[@]}"; do
+  local info
+  info=$(fetch_ena_info "$run")
+  if [ -z "$info" ]; then
+  echo "WARN: No ENA data found for $run — skipping" >&2
+  continue
+  fi
+  
+  while IFS=$'\t' read -r run_acc ftp_urls md5s bytes; do
+  [ -z "$ftp_urls" ] && continue
+  IFS=';' read -ra urls  <<< "$ftp_urls"
+  IFS=';' read -ra mds   <<< "$md5s"
+  IFS=';' read -ra szs   <<< "$bytes"
+  for i in "${!urls[@]}"; do
+  local url="ftp://${urls[$i]}"
+  local fname; fname=$(basename "${urls[$i]}")
+  local out="$BASE_DIR/$subdir/$run_acc/$fname"
+  local sz="${szs[$i]:-0}"
+  local md="${mds[$i]:-}"
+  all_urls+=("$url")
+  all_outs+=("$out")
+  all_sizes+=("$sz")
+  all_md5s+=("$md  $out")
+  done
+  done <<< "$info"
+  done
+  
+  _total_count=${#all_urls[@]}
+    _done_count=0
+    
+    # Resume estimate
+    local present=0 local_bytes=0 total_bytes=0
+    for i in "${!all_outs[@]}"; do
+    local exp=${all_sizes[$i]:-0}
+    total_bytes=$((total_bytes + exp))
+    local f=${all_outs[$i]}
+    if [ -f "$f" ]; then
+    local sz; sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
+    [ "$sz" -gt "$exp" ] && sz=0
+    local_bytes=$((local_bytes + sz))
+    [ "$sz" -ge "$exp" ] && [ "$exp" -gt 0 ] && present=$((present + 1))
+    fi
+    done
+    local pct=$(( total_bytes > 0 ? local_bytes * 100 / total_bytes : 0 ))
+    echo "Resume estimate: $present/$_total_count files complete ($(_human $local_bytes) / $(_human $total_bytes) ≈ ${pct}%)."
+    
+    # Download
+    for i in "${!all_urls[@]}"; do
+    download_one "${all_urls[$i]}" "${all_outs[$i]}" "${all_sizes[$i]:-0}"
+    done
+    
+    # MD5 check
+    echo ""
+    echo "Verifying MD5 checksums for $study..."
+    local md5_input=""
+    for entry in "${all_md5s[@]}"; do
+    [ -n "$entry" ] && md5_input+="$entry"$'\n'
+    done
+    if [ -n "$md5_input" ]; then
+    echo "$md5_input" | md5sum -c --quiet && echo "All checksums OK for $study" || echo "WARN: Some checksums failed for $study — check above"
+    else
+      echo "No MD5s available to check for $study"
+    fi
+    
+    echo "Done: $study → $BASE_DIR/$subdir"
+  }
+  
+  # =============================================================================
+  # Study definitions — run accessions from metadata CSV
+  # =============================================================================
+  
+  # --- SRP112607 (4 runs, 4 experiments) ---
+  SRP112607_RUNS=(
+    SRR5833360
+    SRR5833361
+    SRR5833362
+    SRR5833363
+  )
+  
+  # --- SRP141379 (128 runs, 16 experiments) ---
+  SRP141379_RUNS=(
+    SRR7048256 SRR7048257 SRR7048258 SRR7048259
+    SRR7048260 SRR7048261 SRR7048262 SRR7048263
+    SRR7048264 SRR7048265 SRR7048266 SRR7048267
+    SRR7048268 SRR7048269 SRR7048270 SRR7048271
+    SRR7048272 SRR7048273 SRR7048274 SRR7048275
+    SRR7048276 SRR7048277 SRR7048278 SRR7048279
+    SRR7048280 SRR7048281 SRR7048282 SRR7048283
+    SRR7048284 SRR7048285 SRR7048286 SRR7048287
+    SRR7048288 SRR7048289 SRR7048290 SRR7048291
+    SRR7048292 SRR7048293 SRR7048294 SRR7048295
+    SRR7048296 SRR7048297 SRR7048298 SRR7048299
+    SRR7048300 SRR7048301 SRR7048302 SRR7048303
+    SRR7048304 SRR7048305 SRR7048306 SRR7048307
+    SRR7048308 SRR7048309 SRR7048310 SRR7048311
+    SRR7048312 SRR7048313 SRR7048314 SRR7048315
+    SRR7048316 SRR7048317 SRR7048318 SRR7048319
+    SRR7048320 SRR7048321 SRR7048322 SRR7048323
+    SRR7048324 SRR7048325 SRR7048326 SRR7048327
+    SRR7048328 SRR7048329 SRR7048330 SRR7048331
+    SRR7048332 SRR7048333 SRR7048334 SRR7048335
+    SRR7048336 SRR7048337 SRR7048338 SRR7048339
+    SRR7048340 SRR7048341 SRR7048342 SRR7048343
+    SRR7048344 SRR7048345 SRR7048346 SRR7048347
+    SRR7048348 SRR7048349 SRR7048350 SRR7048351
+    SRR7048352 SRR7048353 SRR7048354 SRR7048355
+    SRR7048356 SRR7048357 SRR7048358 SRR7048359
+    SRR7048360 SRR7048361 SRR7048362 SRR7048363
+    SRR7048364 SRR7048365 SRR7048366 SRR7048367
+    SRR7048368 SRR7048369 SRR7048370 SRR7048371
+    SRR7048372 SRR7048373 SRR7048374 SRR7048375
+    SRR7048376 SRR7048377 SRR7048378 SRR7048379
+    SRR7048380 SRR7048381 SRR7048382 SRR7048383
+  )
+  
+  # --- E-MTAB-14664 (6 runs) — already handled by download_ERP171667.sh ---
+  # Included here for completeness / in case you want one unified script.
+  # Comment this out if ERP171667 is already downloading separately.
+  EMTAB14664_RUNS=(
+    ERR14856082
+    ERR14856083
+    ERR14856084
+    ERR14856085
+    ERR14856086
+    ERR14856087
+  )
+  
+  # =============================================================================
+  # Run all studies sequentially
+  # =============================================================================
+  
+  echo "Starting downloads: $(date)"
+  echo "Output root: $BASE_DIR"
+  
+  download_study "SRP112607"   "SRP112607"   "${SRP112607_RUNS[@]}"
+  download_study "SRP141379"   "SRP141379"   "${SRP141379_RUNS[@]}"
+  download_study "E-MTAB-14664" "E-MTAB-14664/ERP171667" "${EMTAB14664_RUNS[@]}"
+  
+  echo ""
+  echo "============================================================"
+  echo "  All studies complete: $(date)"
+  echo "  Files saved under: $BASE_DIR"
+  echo "============================================================"
+```
+
+
+FASTQC
+```
+#!/bin/bash
+
+# ============================================================
+# run_fastqc.sh
+# Runs FastQC on all .fastq.gz files across three datasets,
+# then aggregates results with MultiQC
+# ============================================================
+
+echo "Starting FastQC pipeline: $(date)"
+
+# --- Create output directories ---
+mkdir -p fastqc_output
+mkdir -p multiqc_output
+
+# --- Run FastQC ---
+echo "Running FastQC..."
+find raw_data/SRP112607/ raw_data/SRP141379/ raw_data/E-MTAB-14664/ \
+    -name "*.fastq.gz" ! -name "*.done" \
+    -type f | xargs fastqc --threads 8 -o fastqc_output/
+
+echo "FastQC complete: $(date)"
+
+# --- Run MultiQC ---
+echo "Running MultiQC..."
+multiqc fastqc_output/ -o multiqc_output/
+
+echo "MultiQC complete: $(date)"
+echo "Pipeline finished: $(date)"
+
+
+
+Trimming data
+#!/bin/bash
+
+# ============================================================
+# run_trimmomatic.sh
+# Removes first 15 bases from paired-end .fastq.gz files
+# across three datasets using Cutadapt
+# ============================================================
+
+echo "Starting Cutadapt pipeline: $(date)"
+
+# --- Create output directory ---
+#mkdir -p trimmed_data
+
+# --- Loop through all _1.fastq.gz files ---
+find /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/SRP112607/ /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/SRP141379/ /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/E-MTAB-14664/ \
+    -name "*_1.fastq.gz" ! -name "*.done" \
+    -type f | while read R1; do
+
+    # Derive the R2 filename by replacing _1.fastq.gz with _2.fastq.gz
+    R2="${R1/_1.fastq.gz/_2.fastq.gz}"
+
+    # Get the sample name (e.g. SRR5833363) from the filename
+    SAMPLE=$(basename "$R1" _1.fastq.gz)
+
+    # Define output filenames
+    R1_OUT="trimmed_data/${SAMPLE}_1_trimmed.fastq.gz"
+    R2_OUT="trimmed_data/${SAMPLE}_2_trimmed.fastq.gz"
+    R1_UNPAIRED="trimmed_data/${SAMPLE}_1_unpaired.fastq.gz"
+    R2_UNPAIRED="trimmed_data/${SAMPLE}_2_unpaired.fastq.gz"
+
+    echo "Trimming $SAMPLE: $(date)"
+
+    cutadapt \
+        -u 15 \
+        -U 15 \
+        -j 8 \
+        -o "$R1_OUT" \
+        -p "$R2_OUT" \
+        "$R1" \
+        "$R2"
+
+
+    echo "Done $SAMPLE: $(date)"
+
+done
+
+echo "Cutadapt pipeline finished: $(date)"
+
+#!/bin/bash
+
+echo "Starting Cutadapt for E-MTAB-14664: $(date)"
+
+find /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/E-MTAB-14664/ -name "*_1.fastq.gz" ! -name "*.done" -type f | while read R1; do
+
+    R2="${R1/_1.fastq.gz/_2.fastq.gz}"
+    SAMPLE=$(basename "$R1" _1.fastq.gz)
+    R1_OUT="trimmed_data/${SAMPLE}_1_trimmed.fastq.gz"
+    R2_OUT="trimmed_data/${SAMPLE}_2_trimmed.fastq.gz"
+
+    echo "Trimming $SAMPLE: $(date)"
+    cutadapt -u 15 -U 15 -j 8 -o "$R1_OUT" -p "$R2_OUT" "$R1" "$R2"
+    echo "Done $SAMPLE: $(date)"
+
+done
+
+echo "Finished: $(date)"
+Merging data ()
+#!/usr/bin/env bash
+# Merge per-lane trimmed FASTQs into per-biological-replicate FASTQs
+# Study: SRP141379 (Zhu et al. 2018) — CAL51, CC-671 treatment
+# 16 biological replicates across 4 conditions x 2 timepoints
+# Each biological replicate was sequenced across 8 lanes → merged here into 1
+
+set -euo pipefail
+
+TRIMMED="/bioinformatics/moniquew/BrCa-Special-Topics/trimmed_data"
+OUT="/bioinformatics/moniquew/BrCa-Special-Topics/merged_data"
+
+mkdir -p "$OUT"
+
+echo "Starting lane merging — $(date)"
+
+# ---------------------------------------------------------------------------
+# Helper function: merge R1 and R2 for a set of SRR runs into one output sample
+# Usage: merge_sample <sample_name> <SRR1> <SRR2> ... 
+# ---------------------------------------------------------------------------
+merge_sample() {
+  local name="$1"; shift
+  local srrs=("$@")
+  local r1_files=() r2_files=()
+
+  for srr in "${srrs[@]}"; do
+    r1_files+=("$TRIMMED/${srr}_1_trimmed.fastq.gz")
+    r2_files+=("$TRIMMED/${srr}_2_trimmed.fastq.gz")
+  done
+
+  echo "  Merging ${#srrs[@]} lanes → ${name} ..."
+  cat "${r1_files[@]}" > "$OUT/${name}_R1.fastq.gz"
+  cat "${r2_files[@]}" > "$OUT/${name}_R2.fastq.gz"
+  echo "  Done: ${name}"
+}
+
+# ---------------------------------------------------------------------------
+# DMSO controls — 6hr (2 biological replicates)
+# ---------------------------------------------------------------------------
+echo "[1/16] DMSO_6hr_rep1 (SRX3979816: SRR7048256–263)"
+merge_sample "DMSO_6hr_rep1" \
+  SRR7048256 SRR7048257 SRR7048258 SRR7048259 \
+  SRR7048260 SRR7048261 SRR7048262 SRR7048263
+
+echo "[2/16] DMSO_6hr_rep2 (SRX3979817: SRR7048264–271)"
+merge_sample "DMSO_6hr_rep2" \
+  SRR7048264 SRR7048265 SRR7048266 SRR7048267 \
+  SRR7048268 SRR7048269 SRR7048270 SRR7048271
+
+# ---------------------------------------------------------------------------
+# DMSO controls — 24hr (2 biological replicates)
+# ---------------------------------------------------------------------------
+echo "[3/16] DMSO_24hr_rep1 (SRX3979818: SRR7048272–279)"
+merge_sample "DMSO_24hr_rep1" \
+  SRR7048272 SRR7048273 SRR7048274 SRR7048275 \
+  SRR7048276 SRR7048277 SRR7048278 SRR7048279
+
+echo "[4/16] DMSO_24hr_rep2 (SRX3979819: SRR7048280–287)"
+merge_sample "DMSO_24hr_rep2" \
+  SRR7048280 SRR7048281 SRR7048282 SRR7048283 \
+  SRR7048284 SRR7048285 SRR7048286 SRR7048287
+
+# ---------------------------------------------------------------------------
+# CC-671 3uM — 6hr (3 biological replicates)
+# ---------------------------------------------------------------------------
+echo "[5/16] CC671_3uM_6hr_rep1 (SRX3979820: SRR7048288–295)"
+merge_sample "CC671_3uM_6hr_rep1" \
+  SRR7048288 SRR7048289 SRR7048290 SRR7048291 \
+  SRR7048292 SRR7048293 SRR7048294 SRR7048295
+
+echo "[6/16] CC671_3uM_6hr_rep2 (SRX3979821: SRR7048296–303)"
+merge_sample "CC671_3uM_6hr_rep2" \
+  SRR7048296 SRR7048297 SRR7048298 SRR7048299 \
+  SRR7048300 SRR7048301 SRR7048302 SRR7048303
+
+echo "[7/16] CC671_3uM_6hr_rep3 (SRX3979822: SRR7048304–311)"
+merge_sample "CC671_3uM_6hr_rep3" \
+  SRR7048304 SRR7048305 SRR7048306 SRR7048307 \
+  SRR7048308 SRR7048309 SRR7048310 SRR7048311
+
+# ---------------------------------------------------------------------------
+# CC-671 3uM — 24hr (3 biological replicates)
+# SRX3979823: SRR7048312–319  (3uM_24hr_rep1)
+# SRX3979824: SRR7048320–327  (3uM_24hr_rep2)
+# SRX3979825: SRR7048328–335  (3uM_24hr_rep3)
+# ---------------------------------------------------------------------------
+echo "[8/16] CC671_3uM_24hr_rep1 (SRX3979823: SRR7048312–319)"
+merge_sample "CC671_3uM_24hr_rep1" \
+  SRR7048312 SRR7048313 SRR7048314 SRR7048315 \
+  SRR7048316 SRR7048317 SRR7048318 SRR7048319
+
+echo "[9/16] CC671_3uM_24hr_rep2 (SRX3979824: SRR7048320–327)"
+merge_sample "CC671_3uM_24hr_rep2" \
+  SRR7048320 SRR7048321 SRR7048322 SRR7048323 \
+  SRR7048324 SRR7048325 SRR7048326 SRR7048327
+
+echo "[10/16] CC671_3uM_24hr_rep3 (SRX3979825: SRR7048328–335)"
+merge_sample "CC671_3uM_24hr_rep3" \
+  SRR7048328 SRR7048329 SRR7048330 SRR7048331 \
+  SRR7048332 SRR7048333 SRR7048334 SRR7048335
+
+# ---------------------------------------------------------------------------
+# CC-671 10uM — 6hr (3 biological replicates)
+# SRX3979826: SRR7048336–343  (10uM_6hr_rep1)
+# SRX3979827: SRR7048344–351  (10uM_6hr_rep2)
+# SRX3979828: SRR7048352–359  (10uM_6hr_rep3)
+# ---------------------------------------------------------------------------
+echo "[11/16] CC671_10uM_6hr_rep1 (SRX3979826: SRR7048336–343)"
+merge_sample "CC671_10uM_6hr_rep1" \
+  SRR7048336 SRR7048337 SRR7048338 SRR7048339 \
+  SRR7048340 SRR7048341 SRR7048342 SRR7048343
+
+echo "[12/16] CC671_10uM_6hr_rep2 (SRX3979827: SRR7048344–351)"
+merge_sample "CC671_10uM_6hr_rep2" \
+  SRR7048344 SRR7048345 SRR7048346 SRR7048347 \
+  SRR7048348 SRR7048349 SRR7048350 SRR7048351
+
+echo "[13/16] CC671_10uM_6hr_rep3 (SRX3979828: SRR7048352–359)"
+merge_sample "CC671_10uM_6hr_rep3" \
+  SRR7048352 SRR7048353 SRR7048354 SRR7048355 \
+  SRR7048356 SRR7048357 SRR7048358 SRR7048359
+
+# ---------------------------------------------------------------------------
+# CC-671 10uM — 24hr (3 biological replicates)
+# SRX3979829: SRR7048360–367  (10uM_24hr_rep1)
+# SRX3979830: SRR7048368–375  (10uM_24hr_rep2)
+# SRX3979831: SRR7048376–383  (10uM_24hr_rep3)
+# ---------------------------------------------------------------------------
+echo "[14/16] CC671_10uM_24hr_rep1 (SRX3979829: SRR7048360–367)"
+merge_sample "CC671_10uM_24hr_rep1" \
+  SRR7048360 SRR7048361 SRR7048362 SRR7048363 \
+  SRR7048364 SRR7048365 SRR7048366 SRR7048367
+
+echo "[15/16] CC671_10uM_24hr_rep2 (SRX3979830: SRR7048368–375)"
+merge_sample "CC671_10uM_24hr_rep2" \
+  SRR7048368 SRR7048369 SRR7048370 SRR7048371 \
+  SRR7048372 SRR7048373 SRR7048374 SRR7048375
+
+echo "[16/16] CC671_10uM_24hr_rep3 (SRX3979831: SRR7048376–383)"
+merge_sample "CC671_10uM_24hr_rep3" \
+  SRR7048376 SRR7048377 SRR7048378 SRR7048379 \
+  SRR7048380 SRR7048381 SRR7048382 SRR7048383
+
+echo ""
+echo "All done — $(date)"
+echo "Merged files written to: $OUT"
+echo ""
+echo "Summary of output files:"
+ls -lh "$OUT"/*.fastq.gz | awk '{print $5, $9}'
+```
+
+Running IRFinder
+Build reference genome
+```
+singularity run IRFinder BuildRef -r IRFinder-repo/REF/Human-GRCh38-release100-100bp -M IRFinder-repo/REF/Mapabilities/hg38/MapabilityExclusion.100bp.bed.gz -e IRFinder-repo/REF/extra-input-files/RNA.SpikeIn.ERCC.fasta.gz -b IRFinder-repo/REF/extra-input-files/Human_hg38_nonPolyA_ROI.bed ftp://ftp.ensembl.org/pub/release-100/gtf/homo_sapiens/Homo_sapiens.GRCh38.100.gtf.gz
+
+
+singularity run IRFinder BuildRef -r IRFinder-repo/REF/Human-GRCh38-release100-150bp -M IRFinder-repo/REF/Mapabilities/hg38/MapabilityExclusion.100bp.bed.gz -e IRFinder-repo/REF/extra-input-files/RNA.SpikeIn.ERCC.fasta.gz -b IRFinder-repo/REF/extra-input-files/Human_hg38_nonPolyA_ROI.bed ftp://ftp.ensembl.org/pub/release-100/gtf/homo_sapiens/Homo_sapiens.GRCh38.100.gtf.gz
+```
+
+Zhu et al
+```
+#!/usr/bin/env bash
+# Run IRFinder on merged per-biological-replicate FASTQs
+# Study: SRP141379 (Zhu et al. 2018) — CAL51, CC-671 treatment
+# 16 biological replicates across 4 conditions x 2 timepoints
+
+set -euo pipefail
+
+MERGED="/bioinformatics/moniquew/BrCa-Special-Topics/merged_data"
+OUT="/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379"
+REF="IRFinder-repo/REF/Human-GRCh38-release100"
+BIN="IRFinder-repo/bin/IRFinder"
+
+mkdir -p "$OUT"
+
+run_irfinder() {
+  local srs="$1" r1="$2" r2="$3"
+  echo "[$(date)] Running IRFinder: $srs"
+  $BIN FastQ -r "$REF" -d "$OUT/${srs}_irfinder" \
+    "$MERGED/$r1" "$MERGED/$r2"
+  echo "[$(date)] Done: $srs"
+}
+
+# ---------------------------------------------------------------------------
+# 6hr — DMSO (0uM)
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204967 DMSO_6hr_rep1_R1.fastq.gz DMSO_6hr_rep1_R2.fastq.gz
+run_irfinder SRS3204969 DMSO_6hr_rep2_R1.fastq.gz DMSO_6hr_rep2_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 6hr — CC-671 3uM
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204971 CC671_3uM_6hr_rep1_R1.fastq.gz CC671_3uM_6hr_rep1_R2.fastq.gz
+run_irfinder SRS3204972 CC671_3uM_6hr_rep2_R1.fastq.gz CC671_3uM_6hr_rep2_R2.fastq.gz
+run_irfinder SRS3204973 CC671_3uM_6hr_rep3_R1.fastq.gz CC671_3uM_6hr_rep3_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 6hr — CC-671 10uM
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204977 CC671_10uM_6hr_rep1_R1.fastq.gz CC671_10uM_6hr_rep1_R2.fastq.gz
+run_irfinder SRS3204978 CC671_10uM_6hr_rep2_R1.fastq.gz CC671_10uM_6hr_rep2_R2.fastq.gz
+run_irfinder SRS3204979 CC671_10uM_6hr_rep3_R1.fastq.gz CC671_10uM_6hr_rep3_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 24hr — DMSO (0uM)
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204968 DMSO_24hr_rep1_R1.fastq.gz DMSO_24hr_rep1_R2.fastq.gz
+run_irfinder SRS3204970 DMSO_24hr_rep2_R1.fastq.gz DMSO_24hr_rep2_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 24hr — CC-671 3uM
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204974 CC671_3uM_24hr_rep1_R1.fastq.gz CC671_3uM_24hr_rep1_R2.fastq.gz
+run_irfinder SRS3204975 CC671_3uM_24hr_rep2_R1.fastq.gz CC671_3uM_24hr_rep2_R2.fastq.gz
+run_irfinder SRS3204976 CC671_3uM_24hr_rep3_R1.fastq.gz CC671_3uM_24hr_rep3_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 24hr — CC-671 10uM
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204980 CC671_10uM_24hr_rep1_R1.fastq.gz CC671_10uM_24hr_rep1_R2.fastq.gz
+run_irfinder SRS3204981 CC671_10uM_24hr_rep2_R1.fastq.gz CC671_10uM_24hr_rep2_R2.fastq.gz
+run_irfinder SRS3204982 CC671_10uM_24hr_rep3_R1.fastq.gz CC671_10uM_24hr_rep3_R2.fastq.gz
+
+echo ""
+echo "All IRFinder jobs complete — $(date)"
+```
+
+Velde
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+TRIMMED="/bioinformatics/moniquew/BrCa-Special-Topics/trimmed_data"
+OUT="/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667"
+REF="IRFinder-repo/REF_150/Human-GRCh38-release100"
+BIN="IRFinder-repo/bin/IRFinder"
+
+mkdir -p "$OUT"
+
+for num in $(seq 82 87); do
+  sample="ERR148560${num}"
+  outdir="$OUT/${sample}_irfinder"
+
+  # Skip if already completed
+  if [ -f "${outdir}/IRFinder-IR-dir.txt" ]; then
+    echo "[$(date)] Skipping $sample — already complete"
+    continue
+  fi
+
+  echo "[$(date)] Running IRFinder: $sample"
+  $BIN FastQ -r "$REF" -d "$outdir" \
+    "$TRIMMED/${sample}_1_trimmed.fastq.gz" \
+    "$TRIMMED/${sample}_2_trimmed.fastq.gz"
+  echo "[$(date)] Done: $sample"
+done
+
+echo ""
+echo "All ERR IRFinder jobs complete — $(date)"
+
+
+Iwai
+# --- SRP112607 (Iwai et al. 2018) ---
+echo "Processing SRP112607: $(date)"
+
+for num in $(seq 360 363)
+do
+    echo "Processing SRR5833${num}: $(date)"
+    IRFinder-repo/bin/IRFinder FastQ -r IRFinder-repo/REF/Human-GRCh38-release100 -d /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP112607/SRR5833${num}_irfinder /bioinformatics/moniquew/BrCa-Special-Topics/trimmed_data/SRR5833${num}_1_trimmed.fastq.gz /bioinformatics/moniquew/BrCa-Special-Topics/trimmed_data/SRR5833${num}_2_trimmed.fastq.gz
+    echo "Done SRR5833${num}: $(date)"
+done
+
+echo "SRP112607 complete: $(date)"
+echo "Pipeline finished: $(date)"
+Filtering IRFinder output
+#!/usr/bin/env Rscript
+# ==============================================================================
+# filter_irfinder.R
+#
+# Finds every "IRFinder-IR-nondir.txt" file under a base directory, filters
+# each one independently using the four IR-event selection criteria below,
+# and writes one filtered output per sample.
+#
+# Criteria applied to each intron row (all must pass):
+#   1. 0.7 <= SpliceLeft / SpliceRight <= 1.3
+#   2. (SpliceLeft + SpliceRight) > 10
+#   3. Coverage > 0.5
+#   4. IRratio > 0.05
+#
+# Output naming:
+#   For an input file at .../IR_quantification/<study>/<SAMPLE>_irfinder/IRFinder-IR-nondir.txt
+#   the output is written as: filtered_ir_nondir_<SAMPLE>.txt
+#   saved in the SAME directory as the source file (i.e. next to it, inside
+#   the <SAMPLE>_irfinder folder).
+#
+# Usage (from an R terminal):
+#   source("filter_irfinder.R")
+#   run_filter("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification")
+#
+# Or from bash:
+#   Rscript filter_irfinder.R /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification
+# ==============================================================================
+
+IRFINDER_COLNAMES <- c(
+  "Chr", "Start", "End", "Gene", "Null", "Strand", "ExcludedBases",
+  "Coverage", "IntronDepth", "Intron25", "Intron50", "Intron75",
+  "ExonToIntronReadsLeft", "ExonToIntronReadsRight",
+  "IntronDepthFirst50bp", "IntronDepthLast50bp",
+  "SpliceLeft", "SpliceRight", "SpliceExact", "IRratio", "Warnings"
+)
+
+# -- Core filter applied to a single sample's data.frame -----------------------
+filter_ir_table <- function(df,
+                             sl_sr_low = 0.7,
+                             sl_sr_high = 1.3,
+                             slsr_sum_min = 10,
+                             coverage_min = 0.5,
+                             ir_min = 0.05) {
+
+  sl <- df$SpliceLeft
+  sr <- df$SpliceRight
+
+  # SL/SR ratio: guard against division by zero.
+  # If SR == 0 and SL == 0 -> no info to reject on, treat as passing.
+  # If SR == 0 and SL > 0  -> ratio undefined/infinite, fails.
+  ratio <- ifelse(sr > 0, sl / sr, ifelse(sl == 0, 1, Inf))
+  pass_ratio <- ratio >= sl_sr_low & ratio <= sl_sr_high
+
+  pass_sum <- (sl + sr) > slsr_sum_min
+  pass_cov <- df$Coverage > coverage_min
+  pass_ir  <- !is.na(df$IRratio) & df$IRratio > ir_min
+
+  keep <- pass_ratio & pass_sum & pass_cov & pass_ir
+  list(
+    filtered = df[keep, , drop = FALSE],
+    n_total = nrow(df),
+    n_pass_ratio = sum(pass_ratio, na.rm = TRUE),
+    n_pass_sum = sum(pass_sum, na.rm = TRUE),
+    n_pass_cov = sum(pass_cov, na.rm = TRUE),
+    n_pass_ir = sum(pass_ir, na.rm = TRUE),
+    n_kept = sum(keep, na.rm = TRUE)
+  )
+}
+
+# -- Read one IRFinder-IR-nondir.txt file --------------------------------------
+read_irfinder_file <- function(filepath) {
+  df <- read.delim(filepath, header = FALSE, sep = "\t",
+                    stringsAsFactors = FALSE, quote = "")
+  n <- ncol(df)
+  if (n < 20) {
+    stop(sprintf("File %s has only %d columns, expected >= 20", filepath, n))
+  }
+  colnames(df)[1:21] <- IRFINDER_COLNAMES[1:min(21, n)]
+
+  # Ensure numeric types where needed
+  numeric_cols <- c("Coverage", "IntronDepth", "SpliceLeft", "SpliceRight",
+                     "SpliceExact", "IRratio")
+  for (col in numeric_cols) {
+    df[[col]] <- suppressWarnings(as.numeric(df[[col]]))
+  }
+  df
+}
+
+# -- Extract sample name from the parent directory name ------------------------
+# e.g. ".../SRS3204967_irfinder/IRFinder-IR-nondir.txt" -> "SRS3204967"
+sample_name_from_path <- function(filepath) {
+  parent_dir <- basename(dirname(filepath))
+  sub("_irfinder$", "", parent_dir)
+}
+
+# -- Main driver: find & filter all files under a base directory ---------------
+run_filter <- function(base_dir,
+                        pattern = "^IRFinder-IR-nondir\\.txt$",
+                        sl_sr_low = 0.7,
+                        sl_sr_high = 1.3,
+                        slsr_sum_min = 10,
+                        coverage_min = 0.5,
+                        ir_min = 0.05,
+                        output_dir = NULL) {
+
+  if (!dir.exists(base_dir)) {
+    stop(sprintf("Base directory not found: %s", base_dir))
+  }
+
+  files <- list.files(base_dir, pattern = pattern, recursive = TRUE,
+                       full.names = TRUE)
+
+  if (length(files) == 0) {
+    stop(sprintf("No files matching '%s' found under %s", pattern, base_dir))
+  }
+
+  cat(sprintf("Found %d IRFinder-IR-nondir.txt files under %s\n\n",
+              length(files), base_dir))
+
+  summary_rows <- list()
+
+  for (fp in files) {
+    sample <- sample_name_from_path(fp)
+    cat(sprintf("Processing %s ... ", sample))
+
+    df <- tryCatch(read_irfinder_file(fp), error = function(e) {
+      cat(sprintf("SKIPPED (read error: %s)\n", conditionMessage(e)))
+      NULL
+    })
+    if (is.null(df)) next
+
+    result <- filter_ir_table(df, sl_sr_low, sl_sr_high, slsr_sum_min,
+                               coverage_min, ir_min)
+
+    out_dir <- if (is.null(output_dir)) dirname(fp) else output_dir
+    if (!is.null(output_dir) && !dir.exists(output_dir)) {
+      dir.create(output_dir, recursive = TRUE)
+    }
+    out_path <- file.path(out_dir, sprintf("filtered_ir_nondir_%s.txt", sample))
+
+    write.table(result$filtered, out_path, sep = "\t", quote = FALSE,
+                row.names = FALSE, col.names = TRUE)
+
+    cat(sprintf("%d / %d introns kept -> %s\n",
+                result$n_kept, result$n_total, out_path))
+
+    summary_rows[[sample]] <- data.frame(
+      sample = sample,
+      n_total = result$n_total,
+      pass_slsr_ratio = result$n_pass_ratio,
+      pass_slsr_sum = result$n_pass_sum,
+      pass_coverage = result$n_pass_cov,
+      pass_ir = result$n_pass_ir,
+      n_kept = result$n_kept
+    )
+  }
+
+  summary_df <- do.call(rbind, summary_rows)
+  cat("\n--- Summary across all samples ---\n")
+  print(summary_df, row.names = FALSE)
+
+  invisible(summary_df)
+}
+
+# -- Allow running directly from bash: Rscript filter_irfinder.R <base_dir> ----
+if (sys.nframe() == 0 && !interactive()) {
+  args <- commandArgs(trailingOnly = TRUE)
+  if (length(args) < 1) {
+    stop("Usage: Rscript filter_irfinder.R <base_dir> [output_dir]")
+  }
+  base_dir <- args[1]
+  output_dir <- if (length(args) >= 2) args[2] else NULL
+  run_filter(base_dir, output_dir = output_dir)
+}
+
+
+Note
+The filtered files only determine which rows (introns) are kept before running DESeq2.
+In other words:
+Raw IRFinder files
+        ↓
+Load counts into DESeq2 object
+        ↓
+Filtered IRFinder files
+        ↓
+Create whitelist of high-quality introns
+        ↓
+Apply IR ratio filter
+        ↓
+Subset DESeq2 object
+        ↓
+Run DESeq()
+So the statistical analysis is performed on raw counts, but only for introns that passed the quality filtering defined by the filtered files. This is generally the preferred approach because DESeq2 expects integer count data, while the filtered files serve as a quality-control filter rather than as the source of counts.
+does that mean the p-values are calculated fo rthe subset only, or for all?
+The p-values are calculated only for the subset that remains after filtering.
+In your script, the critical lines are:
+dds_all <- dds_all_raw[
+    rownames(dds_all_raw) %in% high_ir_introns_all,
+]
+dds_all <- DESeq(dds_all)
+At this point:
+dds_all_raw contains all introns loaded from the raw IRFinder files.
+high_ir_introns_all contains only introns that passed:
+the quality whitelist (from the filtered files), and
+the IR ratio filter (>0.1 in at least 2 samples).
+Then you subset:
+dds_all <- dds_all_raw[ ... ]
+After that, dds_all no longer contains the discarded introns.
+When you run:
+dds_all <- DESeq(dds_all)
+DESeq2 only fits models for the rows present in dds_all.
+Similarly,
+res_6hr_3uM <- results(dds_all, ...)
+returns p-values and adjusted p-values only for those retained introns.
+What this means statistically
+Suppose you started with:
+180,000 introns in the raw files.
+25,000 pass the quality filter.
+8,000 pass the IR > 0.1 filter.
+Then DESeq2 performs hypothesis tests for 8,000 introns, not 180,000.
+The Benjamini–Hochberg multiple testing correction (padj) is also performed across those 8,000 tests, not across all original introns.
+So this filtering strategy reduces the number of hypothesis tests, which generally increases statistical power because you're removing introns that were deemed untestable or essentially unexpressed before running the statistical tests. This kind of independent filtering is a common and appropriate approach, provided the filters are based on signal or quality measures and not on the treatment effect being tested. In your script, the filters are based on quality and baseline IR, not on differences between treatment groups, so they are independent of the differential test itself.
+
+DESeq IR
+Velde et al. 2026
+setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::install(c("SummarizedExperiment", "DESeq2"), ask = FALSE)
+library(DESeq2)
+
+# ── Custom IRFinder DESeq2 function (Kept for Raw File Parsing) ─────────────
+DESeqDataSetFromIRFinder = function(filePaths, designMatrix, designFormula){
+  res=c()
+  libsz=c()
+  spl=c()
+  irtest=read.table(filePaths[1])
+  if (irtest[1,1]=="Chr"){irtest=irtest[-1,]}
+  irnames=unname(apply(as.matrix(irtest),1,FUN=function(x){return(paste0(x[4],"/",x[1],":",x[2],"-",x[3],":",x[6]))}))
+  n=1
+  for (i in filePaths){
+    print(paste0("processing file ",n," at ",i))
+    irtab=read.table(i)
+    if (irtab[1,1]=="Chr"){irtab=irtab[-1,]}
+    tmp1=as.numeric(as.vector(irtab[,9]))
+    tmp2=as.numeric(as.vector(irtab[,19]))
+    tmp3=tmp1+tmp2
+    tmp4=as.numeric(as.vector(irtab[,17]))
+    tmp5=as.numeric(as.vector(irtab[,18]))
+    tmp6=pmax(tmp4,tmp5, na.rm=T)
+    res=cbind(res,tmp1)
+    libsz=cbind(libsz,tmp2)
+    spl=cbind(spl,tmp6)
+    n=n+1
+  }
+  res.rd=round(res)
+  libsz.rd=round(libsz)
+  spl.rd=round(spl)
+  colnames(res.rd)=paste("intronDepth",as.vector(designMatrix[,1]),sep=".")
+  rownames(res.rd)=irnames
+  colnames(libsz.rd)=paste("totalSplice",as.vector(designMatrix[,1]),sep=".")
+  rownames(libsz.rd)=irnames
+  colnames(spl.rd)=paste("maxSplice",as.vector(designMatrix[,1]),sep=".")
+  rownames(spl.rd)=irnames
+  
+  ir=c(rep("IR",dim(designMatrix)[1]),rep("Splice",dim(designMatrix)[1]))
+  group=rbind(designMatrix,designMatrix)
+  group$IRFinder=ir
+  group$IRFinder=factor(group$IRFinder,levels=c("Splice","IR"))
+  
+  counts.IRFinder=cbind(res.rd,spl.rd)
+  
+  dd = DESeqDataSetFromMatrix(countData = counts.IRFinder, colData = group, design = designFormula)
+  sizeFactors(dd)=rep(1,dim(group)[1])
+  rownames(dd)=irnames
+  final=list(dd,res,libsz,spl)
+  names(final)=c("DESeq2Object","IntronDepth","SpliceDepth","MaxSplice")
+  return(final)
+}
+
+# ── Helpers ──────────────────────────────────────────────────
+# Automatically maps raw paths to their corresponding filtered text file counterpart
+filtered_path_for <- function(raw_path) {
+  dir <- dirname(raw_path)
+  sample <- sub("_irfinder$", "", basename(dir))
+  file.path(dir, paste0("filtered_ir_nondir_", sample, ".txt"))
+}
+
+get_testable_introns <- function(raw_paths, min_frac = 0.5) {
+  filtered_paths <- vapply(raw_paths, filtered_path_for, character(1))
+  missing <- filtered_paths[!file.exists(filtered_paths)]
+  if (length(missing) > 0) {
+    stop("Missing filtered file(s):\n  ", paste(missing, collapse = "\n  "),
+         "\nRun filter_irfinder.R first for these samples.")
+  }
+  id_lists <- lapply(filtered_paths, function(fp) {
+    df <- read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+    paste0(df$Gene, "/", df$Chr, ":", df$Start, "-", df$End, ":", df$Strand)
+  })
+  all_ids <- unlist(id_lists)
+  tab <- table(all_ids)
+  n <- length(filtered_paths)
+  names(tab)[(tab / n) >= min_frac]
+}
+
+dir.create("results/ERP171667", recursive = TRUE, showWarnings = FALSE)
+
+# ==============================================================================
+# ERP171667 DATA ANALYSIS
+# ==============================================================================
+# CORRECTED: Point these directly to the raw files so matrix building functions properly
+paths <- c(
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856082_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856083_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856084_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856085_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856086_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856087_irfinder/IRFinder-IR-nondir.txt")
+)
+
+experiment <- data.frame(
+  condition = factor(
+    c("DMSO","DMSO","DMSO","T025","T025","T025"),
+    levels = c("DMSO","T025")
+  )
+)
+
+# Initialize with interaction formula layout
+metaList <- DESeqDataSetFromIRFinder( 
+  filePaths     = paths,
+  designMatrix  = experiment,
+  designFormula = ~ condition + IRFinder + condition:IRFinder
+)
+
+# ==============================================================================
+# TWO-STAGE FILTERING STEP
+# ==============================================================================
+# Stage 1: Get high quality whitelisted introns from filtered files (min_frac check)
+testable_introns <- get_testable_introns(paths, min_frac = 0.5)
+
+# Map valid row names back to matrices to prevent bounds errors
+intron_raw_mat <- metaList$IntronDepth
+rownames(intron_raw_mat) <- rownames(metaList$DESeq2Object)
+intron_filtered_mat <- intron_raw_mat[testable_introns, ]
+
+splice_raw_mat <- metaList$SpliceDepth
+rownames(splice_raw_mat) <- rownames(metaList$DESeq2Object)
+splice_filtered_mat <- splice_raw_mat[testable_introns, ]
+
+# Stage 2: Calculate actual IR ratios and filter for active signal (IR > 0.1)
+all_ir_ratios <- intron_filtered_mat / (intron_filtered_mat + splice_filtered_mat + 0.01)
+
+# Retain introns where at least 3 samples (50% of cohort) show an active IR ratio > 0.1
+high_ir_introns <- rownames(all_ir_ratios)[rowSums(all_ir_ratios > 0.1) >= 3]
+
+message("ERP171667: ", length(testable_introns), " introns pass quality screening.")
+message("Value Filtering: ", length(high_ir_introns), " / ", length(testable_introns), 
+        " introns also pass baseline expression threshold (IR ratio > 0.1 in >=3 samples).")
+
+# Final clean subset of the dds object
+dds <- metaList$DESeq2Object[rownames(metaList$DESeq2Object) %in% high_ir_introns, ]
+dds <- DESeq(dds)
+
+print("Available coefficients for ERP171667:")
+print(resultsNames(dds))
+
+# Extract the interaction term
+res <- results(dds, name = "conditionT025.IRFinderIR")
+
+write.csv(as.data.frame(res),
+          file = "results/ERP171667/T025_vs_DMSO_1uM_24h.csv")
+
+message("T-025 1uM 24h vs DMSO (Differential IR): ",
+        sum(res$padj < 0.05, na.rm = TRUE),
+        " significant introns")
+
+# ==============================================================================
+# GENERATE CUSTOM INTRON RETENTION PCA
+# ==============================================================================
+message("Generating Intron Retention PCA plot...")
+
+# Subset down to final filtered intron list for mapping
+intron_counts <- intron_raw_mat[high_ir_introns, ]
+splice_counts <- splice_raw_mat[high_ir_introns, ]
+ir_ratio <- intron_counts / (intron_counts + splice_counts + 0.01)
+
+log_ir <- log2(ir_ratio + 0.01)
+log_ir_filtered <- log_ir[apply(log_ir, 1, var) > 0, ]
+
+pca_output <- prcomp(t(log_ir_filtered), scale. = TRUE)
+percentVar <- round(100 * (pca_output$sdev^2 / sum(pca_output$sdev^2)))
+
+pca_data <- data.frame(
+  PC1 = pca_output$x[, 1],
+  PC2 = pca_output$x[, 2],
+  Condition = experiment$condition,
+  Sample = paste0("Sample_", 1:nrow(experiment))
+)
+
+png("results/ERP171667/IR_Ratio_PCA.png", width = 800, height = 600, res = 120)
+plot(pca_data$PC1, pca_data$PC2, 
+     col = as.numeric(pca_data$Condition) + 1, 
+     pch = 19, cex = 2,
+     xlab = paste0("PC1: ", percentVar[1], "% variance"),
+     ylab = paste0("PC2: ", percentVar[2], "% variance"),
+     main = "PCA of Intron Retention Ratios (ERP171667)")
+grid(lty = "dotted", col = "gray")
+text(pca_data$PC1, pca_data$PC2, labels = pca_data$Sample, pos = 3, cex = 0.8)
+legend("topright", legend = levels(pca_data$Condition), col = 2:3, pch = 19)
+dev.off()
+
+message("Done! PCA saved to results/ERP171667/IR_Ratio_PCA.png")
+
+
+
+# setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
+# BiocManager::install(c("SummarizedExperiment", "DESeq2"), ask = FALSE)
+# library(DESeq2)
+# 
+# # ── Custom IRFinder DESeq2 function ─────────────────────────
+# DESeqDataSetFromIRFinder = function(filePaths, designMatrix, designFormula){
+#   res=c()
+#   libsz=c()
+#   spl=c()
+#   irtest=read.table(filePaths[1])
+#   if (irtest[1,1]=="Chr"){irtest=irtest[-1,]}
+#   irnames=unname(apply(as.matrix(irtest),1,FUN=function(x){return(paste0(x[4],"/",x[1],":",x[2],"-",x[3],":",x[6]))}))
+#   n=1
+#   for (i in filePaths){
+#     print(paste0("processing file ",n," at ",i))
+#     irtab=read.table(i)
+#     if (irtab[1,1]=="Chr"){irtab=irtab[-1,]}
+#     tmp1=as.numeric(as.vector(irtab[,9]))
+#     tmp2=as.numeric(as.vector(irtab[,19]))
+#     tmp3=tmp1+tmp2
+#     tmp4=as.numeric(as.vector(irtab[,17]))
+#     tmp5=as.numeric(as.vector(irtab[,18]))
+#     tmp6=pmax(tmp4,tmp5, na.rm=T)
+#     res=cbind(res,tmp1)
+#     libsz=cbind(libsz,tmp2)
+#     spl=cbind(spl,tmp6)
+#     n=n+1
+#   }
+#   res.rd=round(res)
+#   libsz.rd=round(libsz)
+#   spl.rd=round(spl)
+#   colnames(res.rd)=paste("intronDepth",as.vector(designMatrix[,1]),sep=".")
+#   rownames(res.rd)=irnames
+#   colnames(libsz.rd)=paste("totalSplice",as.vector(designMatrix[,1]),sep=".")
+#   rownames(libsz.rd)=irnames
+#   colnames(spl.rd)=paste("maxSplice",as.vector(designMatrix[,1]),sep=".")
+#   rownames(spl.rd)=irnames
+#   
+#   ir=c(rep("IR",dim(designMatrix)[1]),rep("Splice",dim(designMatrix)[1]))
+#   group=rbind(designMatrix,designMatrix)
+#   group$IRFinder=ir
+#   group$IRFinder=factor(group$IRFinder,levels=c("Splice","IR"))
+#   
+#   counts.IRFinder=cbind(res.rd,spl.rd)
+#   
+#   dd = DESeqDataSetFromMatrix(countData = counts.IRFinder, colData = group, design = designFormula)
+#   sizeFactors(dd)=rep(1,dim(group)[1])
+#   rownames(dd)=irnames
+#   final=list(dd,res,libsz,spl)
+#   names(final)=c("DESeq2Object","IntronDepth","SpliceDepth","MaxSplice")
+#   return(final)
+# }
+# 
+# # ── Helper: map raw ERR path to its filtered counterpart ──────────────────────
+# # e.g. .../ERR14856082_irfinder/IRFinder-IR-nondir.txt
+# #   -> .../ERR14856082_irfinder/filtered_ir_nondir_ERR14856082.txt
+# filtered_path_for <- function(raw_path) {
+#   dir <- dirname(raw_path)
+#   sample <- sub("_irfinder$", "", basename(dir))
+#   file.path(dir, paste0("filtered_ir_nondir_", sample, ".txt"))
+# }
+# 
+# # ── Helper: determine testable introns for the ERP171667 cohort ───────────────
+# get_testable_introns <- function(raw_paths, min_frac = 0.5) {
+#   filtered_paths <- vapply(raw_paths, filtered_path_for, character(1))
+#   missing <- filtered_paths[!file.exists(filtered_paths)]
+#   if (length(missing) > 0) {
+#     stop("Missing filtered file(s):\n  ", paste(missing, collapse = "\n  "),
+#          "\nRun filter_irfinder.R first for these samples.")
+#   }
+#   id_lists <- lapply(filtered_paths, function(fp) {
+#     df <- read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+#     paste0(df$Gene, "/", df$Chr, ":", df$Start, "-", df$End, ":", df$Strand)
+#   })
+#   all_ids <- unlist(id_lists)
+#   tab <- table(all_ids)
+#   n <- length(filtered_paths)
+#   names(tab)[(tab / n) >= min_frac]
+# }
+# 
+# # ── Output directory ──────────────────────────────────────────────────────────
+# dir.create("results/ERP171667", recursive = TRUE, showWarnings = FALSE)
+# 
+# 
+# # ==============================================================================
+# # ERP171667 DATA ANALYSIS
+# # ==============================================================================
+# 
+# paths <- c(
+#   file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856082_irfinder/filtered_ir_nondir_ERR14856082.txt"),
+#   file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856083_irfinder/filtered_ir_nondir_ERR14856083.txt"),
+#   file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856084_irfinder/filtered_ir_nondir_ERR14856084.txt"),
+#   file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856085_irfinder/filtered_ir_nondir_ERR14856085.txt"),
+#   file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856086_irfinder/filtered_ir_nondir_ERR14856086.txt"),
+#   file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856087_irfinder/filtered_ir_nondir_ERR14856087.txt")
+# )
+# 
+# experiment <- data.frame(
+#   condition = factor(
+#     c("DMSO","DMSO","DMSO","T025","T025","T025"),
+#     levels = c("DMSO","T025")
+#   )
+# )
+# 
+# # 1. Initialize with the CORRECT interaction formula
+# metaList <- DESeqDataSetFromIRFinder( 
+#   filePaths     = paths,
+#   designMatrix  = experiment,
+#   designFormula = ~ condition + IRFinder + condition:IRFinder
+# )
+# 
+# # Apply the QC file filtering criteria (intron must be present in >= 50% of the 6 samples)
+# testable_introns <- get_testable_introns(paths, min_frac = 0.5)
+# message("ERP171667: ", length(testable_introns), " / ", nrow(metaList$DESeq2Object),
+#         " introns pass filter in >=50% of samples and will be tested")
+# # 2. Subset the DESeq2 object down to only the testable introns
+# dds_pre_filtered <- metaList$DESeq2Object[rownames(metaList$DESeq2Object) %in% testable_introns, ]
+# 
+# # ── NEW FILTER: Ensure IR Ratio > 0.1 in at least half (>=3) of the samples ──
+# # Calculate actual IR ratios for all testable introns across your samples
+# intron_raw_mat <- metaList$IntronDepth
+# rownames(intron_raw_mat) <- rownames(metaList$DESeq2Object)
+# intron_filtered_mat <- intron_raw_mat[testable_introns, ]
+# 
+# splice_raw_mat <- metaList$SpliceDepth
+# rownames(splice_raw_mat) <- rownames(metaList$DESeq2Object)
+# splice_filtered_mat <- splice_raw_mat[testable_introns, ]
+# 
+# # IR Ratio = Intron / (Intron + Splice)
+# all_ir_ratios <- intron_filtered_mat / (intron_filtered_mat + splice_filtered_mat + 0.01)
+# 
+# # Find rows where at least 3 samples (50% of your 6 samples) have an IR ratio > 0.1
+# high_ir_introns <- rownames(all_ir_ratios)[rowSums(all_ir_ratios > 0.1) >= 3]
+# 
+# # Final clean subset of the dds object
+# dds <- dds_pre_filtered[rownames(dds_pre_filtered) %in% high_ir_introns, ]
+# 
+# message("Filters applied: ", length(high_ir_introns), " / ", length(testable_introns), 
+#         " introns also passed the baseline IR ratio > 0.1 threshold.")
+# 
+# # # 2. Subset the DESeq2 object down to only the testable introns
+# # dds <- metaList$DESeq2Object[rownames(metaList$DESeq2Object) %in% testable_introns, ]
+# 
+# # Extract the specific interaction term that defines Differential Intron Retention
+# # 3. Run DESeq2 with the interaction design
+# dds <- DESeq(dds)
+# 
+# # Print the exact names to your log so you can see them
+# print("Available coefficients for ERP171667:")
+# print(resultsNames(dds))
+# 
+# # Extract the interaction term
+# res <- results(dds, name = "conditionT025.IRFinderIR")
+# # res <- results(dds, name = "condition_T025_vs_DMSO.IRFinder.IR")
+# 
+# write.csv(as.data.frame(res),
+#           file = "results/ERP171667/T025_vs_DMSO_1uM_24h.csv")
+# 
+# message("T-025 1uM 24h vs DMSO (Differential IR): ",
+#         sum(res$padj < 0.05, na.rm = TRUE),
+#         " significant introns")
+# 
+# 
+# # ==============================================================================
+# # GENERATE CUSTOM INTRON RETENTION PCA (FIXED)
+# # ==============================================================================
+# message("Generating Intron Retention PCA plot...")
+# 
+# # 1. Extract raw matrices and explicitly attach row names from the DESeq2 object
+# intron_raw <- metaList$IntronDepth
+# rownames(intron_raw) <- rownames(metaList$DESeq2Object)
+# intron_counts <- intron_raw[testable_introns, ]
+# 
+# splice_raw <- metaList$SpliceDepth
+# rownames(splice_raw) <- rownames(metaList$DESeq2Object)
+# splice_counts <- splice_raw[testable_introns, ]
+# 
+# # 2. Calculate IR Ratio: Intron / (Intron + Splice) 
+# # Add a small pseudocount (0.01) to avoid dividing by zero or taking log of zero
+# ir_ratio <- intron_counts / (intron_counts + splice_counts + 0.01)
+# 
+# # 3. Log-transform the ratios for PCA stability
+# log_ir <- log2(ir_ratio + 0.01)
+# 
+# # 4. Remove any rows with zero variance across all samples (will crash PCA)
+# log_ir_filtered <- log_ir[apply(log_ir, 1, var) > 0, ]
+# 
+# # 5. Compute PCA (transpose because prcomp expects samples in rows)
+# pca_output <- prcomp(t(log_ir_filtered), scale. = TRUE)
+# 
+# # Calculate percent variance explained by PC1 and PC2
+# percentVar <- round(100 * (pca_output$sdev^2 / sum(pca_output$sdev^2)))
+# 
+# # 6. Build a dataframe for plotting
+# pca_data <- data.frame(
+#   PC1 = pca_output$x[, 1],
+#   PC2 = pca_output$x[, 2],
+#   Condition = experiment$condition,
+#   Sample = paste0("Sample_", 1:nrow(experiment))
+# )
+# 
+# # 7. Save the PCA plot using base R graphics
+# png("results/ERP171667/IR_Ratio_PCA.png", width = 800, height = 600, res = 120)
+# plot(pca_data$PC1, pca_data$PC2, 
+#      col = as.numeric(pca_data$Condition) + 1, 
+#      pch = 19, cex = 2,
+#      xlab = paste0("PC1: ", percentVar[1], "% variance"),
+#      ylab = paste0("PC2: ", percentVar[2], "% variance"),
+#      main = "PCA of Intron Retention Ratios (ERP171667)")
+# grid(lty = "dotted", col = "gray")
+# text(pca_data$PC1, pca_data$PC2, labels = pca_data$Sample, pos = 3, cex = 0.8)
+# legend("topright", legend = levels(pca_data$Condition), col = 2:3, pch = 19)
+# dev.off()
+# 
+# message("Done! PCA saved to results/ERP171667/IR_Ratio_PCA.png")
+
+
+# metaList <- DESeqDataSetFromIRFinder( 
+#   filePaths     = paths,
+#   designMatrix  = experiment,
+#   designFormula = ~ condition
+# )
+# 
+# # Apply the QC file filtering criteria (intron must be present in >= 50% of the 6 samples)
+# testable_introns <- get_testable_introns(paths, min_frac = 0.5)
+# message("ERP171667: ", length(testable_introns), " / ", nrow(metaList$DESeq2Object),
+#         " introns pass filter in >=50% of samples and will be tested")
+# 
+# # Subset the DESeq2 object down to only the testable introns before running DESeq()
+# dds <- metaList$DESeq2Object[rownames(metaList$DESeq2Object) %in% testable_introns, ]
+# dds <- DESeq(dds)
+# 
+# res <- results(dds, contrast = c("condition", "T025", "DMSO"))
+# 
+# write.csv(as.data.frame(res),
+#           file = "results/ERP171667/T025_vs_DMSO_1uM_24h.csv")
+# 
+# message("T-025 1uM 24h vs DMSO: ",
+#         sum(res$padj < 0.05, na.rm = TRUE),
+#         " significant introns")
+# message("Done!")
+
+Zhu et al. 2018
+setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::install(c("SummarizedExperiment", "DESeq2"), ask = FALSE)
+library(DESeq2)
+
+# ── Custom IRFinder DESeq2 function (Kept for Raw File Parsing) ─────────────
+DESeqDataSetFromIRFinder = function(filePaths, designMatrix, designFormula){
+  res=c()
+  libsz=c()
+  spl=c()
+  irtest=read.table(filePaths[1])
+  if (irtest[1,1]=="Chr"){irtest=irtest[-1,]}
+  irnames=unname(apply(as.matrix(irtest),1,FUN=function(x){return(paste0(x[4],"/",x[1],":",x[2],"-",x[3],":",x[6]))}))
+  n=1
+  for (i in filePaths){
+    print(paste0("processing file ",n," at ",i))
+    irtab=read.table(i)
+    if (irtab[1,1]=="Chr"){irtab=irtab[-1,]}
+    tmp1=as.numeric(as.vector(irtab[,9]))
+    tmp2=as.numeric(as.vector(irtab[,19]))
+    tmp3=tmp1+tmp2
+    tmp4=as.numeric(as.vector(irtab[,17]))
+    tmp5=as.numeric(as.vector(irtab[,18]))
+    tmp6=pmax(tmp4,tmp5, na.rm=T)
+    res=cbind(res,tmp1)
+    libsz=cbind(libsz,tmp2)
+    spl=cbind(spl,tmp6)
+    n=n+1
+  }
+  res.rd=round(res)
+  libsz.rd=round(libsz)
+  spl.rd=round(spl)
+  colnames(res.rd)=paste("intronDepth",as.vector(designMatrix[,1]),sep=".")
+  rownames(res.rd)=irnames
+  colnames(libsz.rd)=paste("totalSplice",as.vector(designMatrix[,1]),sep=".")
+  rownames(libsz.rd)=irnames
+  colnames(spl.rd)=paste("maxSplice",as.vector(designMatrix[,1]),sep=".")
+  rownames(spl.rd)=irnames
+  ir=c(rep("IR",dim(designMatrix)[1]),rep("Splice",dim(designMatrix)[1]))
+  
+  group=rbind(designMatrix,designMatrix)
+  group$IRFinder=ir
+  group$IRFinder=factor(group$IRFinder,levels=c("Splice","IR"))
+  
+  counts.IRFinder=cbind(res.rd,spl.rd)
+  dd = DESeqDataSetFromMatrix(countData = counts.IRFinder, colData = group, design = designFormula)
+  sizeFactors(dd)=rep(1,dim(group)[1])
+  rownames(dd)=irnames
+  final=list(dd,res,libsz,spl)
+  names(final)=c("DESeq2Object","IntronDepth","SpliceDepth","MaxSplice")
+  return(final)
+}
+
+# ── Helpers ──────────────────────────────────────────────────
+# Maps raw path back to the pre-filtered file path to discover the high-quality whitelist
+filtered_path_for <- function(raw_path) {
+  dir <- dirname(raw_path)
+  sample <- sub("_irfinder$", "", basename(dir))
+  file.path(dir, paste0("filtered_ir_nondir_", sample, ".txt"))
+}
+
+get_testable_introns <- function(raw_paths, min_frac = 0.5) {
+  filtered_paths <- vapply(raw_paths, filtered_path_for, character(1))
+  missing <- filtered_paths[!file.exists(filtered_paths)]
+  if (length(missing) > 0) {
+    stop("Missing filtered file(s):\n  ", paste(missing, collapse = "\n  "),
+         "\nRun filter_irfinder.R first for these samples.")
+  }
+  id_lists <- lapply(filtered_paths, function(fp) {
+    df <- read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+    paste0(df$Gene, "/", df$Chr, ":", df$Start, "-", df$End, ":", df$Strand)
+  })
+  all_ids <- unlist(id_lists)
+  tab <- table(all_ids)
+  n <- length(filtered_paths)
+  names(tab)[(tab / n) >= min_frac]
+}
+
+dir.create("results/SRP141379", recursive = TRUE, showWarnings = FALSE)
+
+# ============================================================
+# POOLED SAMPLE & METADATA CONFIGURATION
+# ============================================================
+# NOTE: point these directly to the raw IRFinder outputs so the matrix loader functions correctly!
+paths_all <- c(
+  # 6-Hour Timepoints
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204967_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204969_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204971_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204972_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204973_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204977_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204978_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204979_irfinder/IRFinder-IR-nondir.txt",
+  # 24-Hour Timepoints
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204968_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204970_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204974_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204975_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204976_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204980_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204981_irfinder/IRFinder-IR-nondir.txt",
+  "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204982_irfinder/IRFinder-IR-nondir.txt"
+)
+
+experiment_all <- data.frame(
+  condition = c(rep("DMSO", 2), rep("CC671_3uM", 3), rep("CC671_10uM", 3), 
+                rep("DMSO", 2), rep("CC671_3uM", 3), rep("CC671_10uM", 3)),
+  timepoint = c(rep("6hr", 8), rep("24hr", 8))
+)
+
+# Load data using raw file layouts
+metaList_all <- DESeqDataSetFromIRFinder(
+  filePaths     = paths_all,
+  designMatrix  = experiment_all,
+  designFormula = ~ 1
+)
+
+dds_all_raw <- metaList_all$DESeq2Object
+
+colData(dds_all_raw)$final_group <- factor(
+  paste(colData(dds_all_raw)$condition, colData(dds_all_raw)$timepoint, colData(dds_all_raw)$IRFinder, sep = "_")
+)
+design(dds_all_raw) <- ~ 0 + final_group
+
+# ============================================================
+# TWO-STAGE FILTERING STEP (FIXED)
+# ============================================================
+# Stage 1: Get high quality whitelisted introns from filtered files
+testable_all <- get_testable_introns(paths_all, min_frac = 0.5)
+
+# Map row names back to matrices to prevent bounds errors
+intron_raw_mat <- metaList_all$IntronDepth
+rownames(intron_raw_mat) <- rownames(metaList_all$DESeq2Object)
+intron_filtered_mat <- intron_raw_mat[testable_all, ]
+
+splice_raw_mat <- metaList_all$SpliceDepth
+rownames(splice_raw_mat) <- rownames(metaList_all$DESeq2Object)
+splice_filtered_mat <- splice_raw_mat[testable_all, ]
+
+# Stage 2: Calculate actual IR values and filter for IR > 0.1
+all_ir_ratios <- intron_filtered_mat / (intron_filtered_mat + splice_filtered_mat + 0.01)
+
+# Retain introns with an active IR ratio > 0.1 in >= 2 samples
+high_ir_introns_all <- rownames(all_ir_ratios)[rowSums(all_ir_ratios > 0.1) >= 2]
+
+message("Combined Analysis: ", length(testable_all), " introns pass quality screening.")
+message("Value Filtering: ", length(high_ir_introns_all), " / ", length(testable_all), 
+        " introns also pass baseline expression threshold (IR ratio > 0.1 in >=2 samples).")
+
+# Subset and process final clean dataset
+dds_all <- dds_all_raw[rownames(dds_all_raw) %in% high_ir_introns_all, ]
+dds_all <- DESeq(dds_all)
+
+levels_available <- resultsNames(dds_all)
+print("Available coefficients for custom contrasts:")
+print(levels_available)
+
+# ============================================================
+# EXTRACTING RESULTS & CALCULATING CONTRASTS
+# ============================================================
+make_ir_contrast <- function(all_names, drug, tp) {
+  vec <- rep(0, length(all_names))
+  vec[grep(paste0("final_group", drug, "_", tp, "_IR"),      all_names)] <- 1
+  vec[grep(paste0("final_group", drug, "_", tp, "_Splice"),  all_names)] <- -1
+  vec[grep(paste0("final_groupDMSO_", tp, "_IR"),            all_names)] <- -1
+  vec[grep(paste0("final_groupDMSO_", tp, "_Splice"),        all_names)] <- 1
+  return(vec)
+}
+
+contrast_6hr_3uM  <- make_ir_contrast(levels_available, "CC671_3uM", "6hr")
+contrast_6hr_10uM <- make_ir_contrast(levels_available, "CC671_10uM", "6hr")
+res_6hr_3uM  <- results(dds_all, contrast = contrast_6hr_3uM)
+res_6hr_10uM <- results(dds_all, contrast = contrast_6hr_10uM)
+
+contrast_24hr_3uM  <- make_ir_contrast(levels_available, "CC671_3uM", "24hr")
+contrast_24hr_10uM <- make_ir_contrast(levels_available, "CC671_10uM", "24hr")
+res_24hr_3uM  <- results(dds_all, contrast = contrast_24hr_3uM)
+res_24hr_10uM <- results(dds_all, contrast = contrast_24hr_10uM)
+
+write.csv(as.data.frame(res_6hr_3uM),   file = "results/SRP141379/CC671_3uM_vs_DMSO_6hr.csv")
+write.csv(as.data.frame(res_6hr_10uM),  file = "results/SRP141379/CC671_10uM_vs_DMSO_6hr.csv")
+write.csv(as.data.frame(res_24hr_3uM),  file = "results/SRP141379/CC671_3uM_vs_DMSO_24hr.csv")
+write.csv(as.data.frame(res_24hr_10uM), file = "results/SRP141379/CC671_10uM_vs_DMSO_24hr.csv")
+
+message("--- Summary of Significant Intron Retention Events (padj < 0.05) ---")
+message("6hr  - CC671 3uM vs DMSO:  ", sum(res_6hr_3uM$padj < 0.05, na.rm = TRUE))
+message("6hr  - CC671 10uM vs DMSO: ", sum(res_6hr_10uM$padj < 0.05, na.rm = TRUE))
+message("24hr - CC671 3uM vs DMSO:  ", sum(res_24hr_3uM$padj < 0.05, na.rm = TRUE))
+message("24hr - CC671 10uM vs DMSO: ", sum(res_24hr_10uM$padj < 0.05, na.rm = TRUE))
+
+# ============================================================
+# GENERATE CUSTOM MULTI-CONDITION INTRON RETENTION PCA
+# ============================================================
+message("Generating Intron Retention multi-factor PCA plot...")
+
+intron_counts <- intron_raw_mat[high_ir_introns_all, ]
+splice_counts <- splice_raw_mat[high_ir_introns_all, ]
+
+ir_ratio <- intron_counts / (intron_counts + splice_counts + 0.01)
+log_ir <- log2(ir_ratio + 0.01)
+log_ir_filtered <- log_ir[apply(log_ir, 1, var) > 0, ]
+
+pca_output <- prcomp(t(log_ir_filtered), scale. = TRUE)
+percentVar <- round(100 * (pca_output$sdev^2 / sum(pca_output$sdev^2)))
+pca_data <- data.frame(PC1 = pca_output$x[, 1],
+                       PC2 = pca_output$x[, 2],
+                       Condition = experiment_all$condition,
+                       Timepoint = experiment_all$timepoint)
+
+pca_data$ColorCode <- as.numeric(factor(pca_data$Condition, levels = c("DMSO", "CC671_3uM", "CC671_10uM"))) + 1
+pca_data$ShapeCode <- ifelse(pca_data$Timepoint == "6hr", 16, 17)
+
+png("results/SRP141379/IR_MultiFactor_PCA.png", width = 900, height = 700, res = 130)
+
+plot(pca_data$PC1, pca_data$PC2,col = pca_data$ColorCode,pch = pca_data$ShapeCode,cex = 2,xlab = paste0("PC1: ", percentVar[1], "% variance"),ylab = paste0("PC2: ", percentVar[2], "% variance"),main = "PCA of Intron Retention Ratios (SRP141379)")
+
+grid(lty = "dotted", col = "gray")
+
+legend("topleft", legend = c("DMSO", "CC671 3uM", "CC671 10uM"), col = c(2, 3, 4), pch = 16, title = "Treatment")
+legend("bottomleft", legend = c("6 Hours", "24 Hours"), col = "black", pch = c(16, 17), title = "Timepoint")
+dev.off()
+message("Done! Multi-factor PCA saved to results/SRP141379/IR_MultiFactor_PCA.png")
+# setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
+# if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+# BiocManager::install(c("SummarizedExperiment", "DESeq2"), ask = FALSE)
+# library(DESeq2)
+# 
+# # ── Custom IRFinder DESeq2 function ─────────────────────────
+# DESeqDataSetFromIRFinder = function(filePaths, designMatrix, designFormula){
+#   res=c()
+#   libsz=c()
+#   spl=c()
+#   irtest=read.table(filePaths[1])
+#   if (irtest[1,1]=="Chr"){irtest=irtest[-1,]}
+#   irnames=unname(apply(as.matrix(irtest),1,FUN=function(x){return(paste0(x[4],"/",x[1],":",x[2],"-",x[3],":",x[6]))}))
+#   n=1
+#   for (i in filePaths){
+#     print(paste0("processing file ",n," at ",i))
+#     irtab=read.table(i)
+#     if (irtab[1,1]=="Chr"){irtab=irtab[-1,]}
+#     tmp1=as.numeric(as.vector(irtab[,9]))
+#     tmp2=as.numeric(as.vector(irtab[,19]))
+#     tmp3=tmp1+tmp2
+#     tmp4=as.numeric(as.vector(irtab[,17]))
+#     tmp5=as.numeric(as.vector(irtab[,18]))
+#     tmp6=pmax(tmp4,tmp5, na.rm=T)
+#     res=cbind(res,tmp1)
+#     libsz=cbind(libsz,tmp2)
+#     spl=cbind(spl,tmp6)
+#     n=n+1
+#   }
+#   res.rd=round(res)
+#   libsz.rd=round(libsz)
+#   spl.rd=round(spl)
+#   colnames(res.rd)=paste("intronDepth",as.vector(designMatrix[,1]),sep=".")
+#   rownames(res.rd)=irnames
+#   colnames(libsz.rd)=paste("totalSplice",as.vector(designMatrix[,1]),sep=".")
+#   rownames(libsz.rd)=irnames
+#   colnames(spl.rd)=paste("maxSplice",as.vector(designMatrix[,1]),sep=".")
+#   rownames(spl.rd)=irnames
+#   ir=c(rep("IR",dim(designMatrix)[1]),rep("Splice",dim(designMatrix)[1]))
+#   
+#   # Duplicate the metadata rows for the IR vs Splice counts
+#   group=rbind(designMatrix,designMatrix)
+#   group$IRFinder=ir
+#   group$IRFinder=factor(group$IRFinder,levels=c("Splice","IR"))
+#   
+#   counts.IRFinder=cbind(res.rd,spl.rd)
+#   dd = DESeqDataSetFromMatrix(countData = counts.IRFinder, colData = group, design = designFormula)
+#   sizeFactors(dd)=rep(1,dim(group)[1])
+#   rownames(dd)=irnames
+#   final=list(dd,res,libsz,spl)
+#   names(final)=c("DESeq2Object","IntronDepth","SpliceDepth","MaxSplice")
+#   return(final)
+# }
+# 
+# # ── Helpers ──────────────────────────────────────────────────
+# filtered_path_for <- function(raw_path) {
+#   dir <- dirname(raw_path)
+#   sample <- sub("_irfinder$", "", basename(dir))
+#   file.path(dir, paste0("filtered_ir_nondir_", sample, ".txt"))
+# }
+# 
+# get_testable_introns <- function(raw_paths, min_frac = 0.5) {
+#   filtered_paths <- vapply(raw_paths, filtered_path_for, character(1))
+#   missing <- filtered_paths[!file.exists(filtered_paths)]
+#   if (length(missing) > 0) {
+#     stop("Missing filtered file(s):\n  ", paste(missing, collapse = "\n  "),
+#          "\nRun filter_irfinder.R first for these samples.")
+#   }
+#   id_lists <- lapply(filtered_paths, function(fp) {
+#     df <- read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+#     paste0(df$Gene, "/", df$Chr, ":", df$Start, "-", df$End, ":", df$Strand)
+#   })
+#   all_ids <- unlist(id_lists)
+#   tab <- table(all_ids)
+#   n <- length(filtered_paths)
+#   names(tab)[(tab / n) >= min_frac]
+# }
+# 
+# dir.create("results/SRP141379", recursive = TRUE, showWarnings = FALSE)
+# 
+# # ============================================================
+# # POOLED SAMPLE & METADATA CONFIGURATION
+# # ============================================================
+# 
+# paths_all <- c(
+#   # 6-Hour Timepoints
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204967_irfinder/filtered_ir_nondir_SRS3204967.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204969_irfinder/filtered_ir_nondir_SRS3204969.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204971_irfinder/filtered_ir_nondir_SRS3204971.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204972_irfinder/filtered_ir_nondir_SRS3204972.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204973_irfinder/filtered_ir_nondir_SRS3204973.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204977_irfinder/filtered_ir_nondir_SRS3204977.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204978_irfinder/filtered_ir_nondir_SRS3204978.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204979_irfinder/filtered_ir_nondir_SRS3204979.txt",
+#   # 24-Hour Timepoints
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204968_irfinder/filtered_ir_nondir_SRS3204968.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204970_irfinder/filtered_ir_nondir_SRS3204970.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204974_irfinder/filtered_ir_nondir_SRS3204974.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204975_irfinder/filtered_ir_nondir_SRS3204975.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204976_irfinder/filtered_ir_nondir_SRS3204976.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204980_irfinder/filtered_ir_nondir_SRS3204980.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204981_irfinder/filtered_ir_nondir_SRS3204981.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204982_irfinder/filtered_ir_nondir_SRS3204982.txt"
+# )
+# 
+# # 1. Build base experimental metadata structure
+# experiment_all <- data.frame(
+#   condition = c(rep("DMSO", 2), rep("CC671_3uM", 3), rep("CC671_10uM", 3), 
+#                 rep("DMSO", 2), rep("CC671_3uM", 3), rep("CC671_10uM", 3)),
+#   timepoint = c(rep("6hr", 8), rep("24hr", 8))
+# )
+# 
+# # 2. Build the dataset using a plain intercept-only formula (~1) to bypass early validation
+# metaList_all <- DESeqDataSetFromIRFinder(
+#   filePaths     = paths_all,
+#   designMatrix  = experiment_all,
+#   designFormula = ~ 1
+# )
+# 
+# # 3. Safely extract object, append final_group, and re-apply our target design matrix
+# dds_all_raw <- metaList_all$DESeq2Object
+# 
+# colData(dds_all_raw)$final_group <- factor(
+#   paste(colData(dds_all_raw)$condition, colData(dds_all_raw)$timepoint, colData(dds_all_raw)$IRFinder, sep = "_")
+# )
+# 
+# # Now we safely transition the model over to the no-intercept layout
+# design(dds_all_raw) <- ~ 0 + final_group
+# 
+# # 4. Global QC filter across all 16 files + Baseline value filter (IR > 0.1)
+# testable_all <- get_testable_introns(paths_all, min_frac = 0.5)
+# 
+# # Extract raw matrices and assign valid row names from DESeq2Object
+# intron_raw_mat <- metaList_all$IntronDepth
+# rownames(intron_raw_mat) <- rownames(metaList_all$DESeq2Object)
+# intron_filtered_mat <- intron_raw_mat[testable_all, ]
+# 
+# splice_raw_mat <- metaList_all$SpliceDepth
+# rownames(splice_raw_mat) <- rownames(metaList_all$DESeq2Object)
+# splice_filtered_mat <- splice_raw_mat[testable_all, ]
+# 
+# # Calculate baseline IR Ratio matrix
+# all_ir_ratios <- intron_filtered_mat / (intron_filtered_mat + splice_filtered_mat + 0.01)
+# 
+# # Keep introns where at least 2 samples (matching minimum replicate sizes) have an IR ratio > 0.1
+# high_ir_introns_all <- rownames(all_ir_ratios)[rowSums(all_ir_ratios > 0.1) >= 2]
+# 
+# message("Combined Analysis: ", length(testable_all), " introns pass min_frac filter.")
+# message("Value Filtering: ", length(high_ir_introns_all), " / ", length(testable_all), 
+#         " introns also have an IR ratio > 0.1 in >=2 samples and will be tested.")
+# 
+# # Subset down to final filtered intron whitelist
+# dds_all <- dds_all_raw[rownames(dds_all_raw) %in% high_ir_introns_all, ]
+# dds_all <- DESeq(dds_all)
+# 
+# # Print explicit names available to make sure contrasts match up perfectly
+# levels_available <- resultsNames(dds_all)
+# print("Available coefficients for custom contrasts:")
+# print(levels_available)
+# 
+# # ============================================================
+# # EXTRACTING RESULTS VIA EXPLICIT NUMERIC VECTORS
+# # ============================================================
+# make_ir_contrast <- function(all_names, drug, tp) {
+#   vec <- rep(0, length(all_names))
+#   vec[grep(paste0("final_group", drug, "_", tp, "_IR"),      all_names)] <- 1
+#   vec[grep(paste0("final_group", drug, "_", tp, "_Splice"),  all_names)] <- -1
+#   vec[grep(paste0("final_groupDMSO_", tp, "_IR"),            all_names)] <- -1
+#   vec[grep(paste0("final_groupDMSO_", tp, "_Splice"),        all_names)] <- 1
+#   return(vec)
+# }
+# 
+# # ── 6-Hour Timepoint Contrasts ──────────────────────────────
+# contrast_6hr_3uM  <- make_ir_contrast(levels_available, "CC671_3uM", "6hr")
+# contrast_6hr_10uM <- make_ir_contrast(levels_available, "CC671_10uM", "6hr")
+# 
+# res_6hr_3uM  <- results(dds_all, contrast = contrast_6hr_3uM)
+# res_6hr_10uM <- results(dds_all, contrast = contrast_6hr_10uM)
+# 
+# # ── 24-Hour Timepoint Contrasts ─────────────────────────────
+# contrast_24hr_3uM  <- make_ir_contrast(levels_available, "CC671_3uM", "24hr")
+# contrast_24hr_10uM <- make_ir_contrast(levels_available, "CC671_10uM", "24hr")
+# 
+# res_24hr_3uM  <- results(dds_all, contrast = contrast_24hr_3uM)
+# res_24hr_10uM <- results(dds_all, contrast = contrast_24hr_10uM)
+# 
+# # ── Save Outputs ────────────────────────────────────────────
+# write.csv(as.data.frame(res_6hr_3uM),   file = "results/SRP141379/CC671_3uM_vs_DMSO_6hr.csv")
+# write.csv(as.data.frame(res_6hr_10uM),  file = "results/SRP141379/CC671_10uM_vs_DMSO_6hr.csv")
+# write.csv(as.data.frame(res_24hr_3uM),  file = "results/SRP141379/CC671_3uM_vs_DMSO_24hr.csv")
+# write.csv(as.data.frame(res_24hr_10uM), file = "results/SRP141379/CC671_10uM_vs_DMSO_24hr.csv")
+# 
+# # Print Summary Run Metrics
+# message("--- Summary of Significant Intron Retention Events (padj < 0.05) ---")
+# message("6hr  - CC671 3uM vs DMSO:  ", sum(res_6hr_3uM$padj < 0.05, na.rm = TRUE))
+# message("6hr  - CC671 10uM vs DMSO: ", sum(res_6hr_10uM$padj < 0.05, na.rm = TRUE))
+# message("24hr - CC671 3uM vs DMSO:  ", sum(res_24hr_3uM$padj < 0.05, na.rm = TRUE))
+# message("24hr - CC671 10uM vs DMSO: ", sum(res_24hr_10uM$padj < 0.05, na.rm = TRUE))
+# 
+# 
+# # ============================================================
+# # GENERATE CUSTOM MULTI-CONDITION INTRON RETENTION PCA
+# # ============================================================
+# message("Generating Intron Retention multi-factor PCA plot...")
+# 
+# # 1. Extract raw matrices and explicitly attach row names from the DESeq2 object
+# intron_raw <- metaList_all$IntronDepth
+# rownames(intron_raw) <- rownames(metaList_all$DESeq2Object)
+# intron_counts <- intron_raw[testable_all, ]
+# 
+# splice_raw <- metaList_all$SpliceDepth
+# rownames(splice_raw) <- rownames(metaList_all$DESeq2Object)
+# splice_counts <- splice_raw[testable_all, ]
+# 
+# # 2. Calculate IR Ratio: Intron / (Intron + Splice) 
+# # Add small pseudocount (0.01) to protect against mathematical zeroes
+# ir_ratio <- intron_counts / (intron_counts + splice_counts + 0.01)
+# 
+# # 3. Log-transform and filter invariant rows
+# log_ir <- log2(ir_ratio + 0.01)
+# log_ir_filtered <- log_ir[apply(log_ir, 1, var) > 0, ]
+# 
+# # 4. Compute PCA (transpose because columns are samples)
+# pca_output <- prcomp(t(log_ir_filtered), scale. = TRUE)
+# percentVar <- round(100 * (pca_output$sdev^2 / sum(pca_output$sdev^2)))
+# 
+# # 5. Build PCA dataframe mapping back to your 16 individual samples
+# pca_data <- data.frame(
+#   PC1       = pca_output$x[, 1],
+#   PC2       = pca_output$x[, 2],
+#   Condition = experiment_all$condition,
+#   Timepoint = experiment_all$timepoint,
+#   Group     = paste(experiment_all$condition, experiment_all$timepoint, sep = "_")
+# )
+# 
+# # Assign distinct plotting visual features (colors for drug, shapes for time)
+# pca_data$ColorCode <- as.numeric(factor(pca_data$Condition, levels = c("DMSO", "CC671_3uM", "CC671_10uM"))) + 1
+# pca_data$ShapeCode <- ifelse(pca_data$Timepoint == "6hr", 16, 17) # Circle=6hr, Triangle=24hr
+# 
+# # 6. Save Plot
+# png("results/SRP141379/IR_MultiFactor_PCA.png", width = 900, height = 700, res = 130)
+# plot(pca_data$PC1, pca_data$PC2, 
+#      col = pca_data$ColorCode, 
+#      pch = pca_data$ShapeCode, 
+#      cex = 2,
+#      xlab = paste0("PC1: ", percentVar[1], "% variance"),
+#      ylab = paste0("PC2: ", percentVar[2], "% variance"),
+#      main = "PCA of Intron Retention Ratios (SRP141379)")
+# 
+# grid(lty = "dotted", col = "gray")
+# 
+# # Add a distinct legend configuration split by Factor
+# legend("topleft", 
+#        legend = c("DMSO", "CC671 3uM", "CC671 10uM"), 
+#        col = c(2, 3, 4), 
+#        pch = 16, 
+#        title = "Treatment")
+# 
+# legend("bottomleft", 
+#        legend = c("6 Hours", "24 Hours"), 
+#        col = "black", 
+#        pch = c(16, 17), 
+#        title = "Timepoint")
+# 
+# dev.off()
+# 
+# message("Done! Multi-factor PCA saved to results/SRP141379/IR_MultiFactor_PCA.png")
+
+
+# setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
+# if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+# BiocManager::install(c("SummarizedExperiment", "DESeq2"), ask = FALSE)
+# library(DESeq2)
+# 
+# # ── Custom IRFinder DESeq2 function ─────────────────────────
+# DESeqDataSetFromIRFinder = function(filePaths, designMatrix, designFormula){
+#   res=c()
+#   libsz=c()
+#   spl=c()
+#   irtest=read.table(filePaths[1])
+#   if (irtest[1,1]=="Chr"){irtest=irtest[-1,]}
+#   irnames=unname(apply(as.matrix(irtest),1,FUN=function(x){return(paste0(x[4],"/",x[1],":",x[2],"-",x[3],":",x[6]))}))
+#   n=1
+#   for (i in filePaths){
+#     print(paste0("processing file ",n," at ",i))
+#     irtab=read.table(i)
+#     if (irtab[1,1]=="Chr"){irtab=irtab[-1,]}
+#     tmp1=as.numeric(as.vector(irtab[,9]))
+#     tmp2=as.numeric(as.vector(irtab[,19]))
+#     tmp3=tmp1+tmp2
+#     tmp4=as.numeric(as.vector(irtab[,17]))
+#     tmp5=as.numeric(as.vector(irtab[,18]))
+#     tmp6=pmax(tmp4,tmp5, na.rm=T)
+#     res=cbind(res,tmp1)
+#     libsz=cbind(libsz,tmp2)
+#     spl=cbind(spl,tmp6)
+#     n=n+1
+#   }
+#   res.rd=round(res)
+#   libsz.rd=round(libsz)
+#   spl.rd=round(spl)
+#   colnames(res.rd)=paste("intronDepth",as.vector(designMatrix[,1]),sep=".")
+#   rownames(res.rd)=irnames
+#   colnames(libsz.rd)=paste("totalSplice",as.vector(designMatrix[,1]),sep=".")
+#   rownames(libsz.rd)=irnames
+#   colnames(spl.rd)=paste("maxSplice",as.vector(designMatrix[,1]),sep=".")
+#   rownames(spl.rd)=irnames
+#   ir=c(rep("IR",dim(designMatrix)[1]),rep("Splice",dim(designMatrix)[1]))
+#   
+#   # Duplicate the metadata rows for the IR vs Splice counts
+#   group=rbind(designMatrix,designMatrix)
+#   group$IRFinder=ir
+#   group$IRFinder=factor(group$IRFinder,levels=c("Splice","IR"))
+#   
+#   counts.IRFinder=cbind(res.rd,spl.rd)
+#   dd = DESeqDataSetFromMatrix(countData = counts.IRFinder, colData = group, design = designFormula)
+#   sizeFactors(dd)=rep(1,dim(group)[1])
+#   rownames(dd)=irnames
+#   final=list(dd,res,libsz,spl)
+#   names(final)=c("DESeq2Object","IntronDepth","SpliceDepth","MaxSplice")
+#   return(final)
+# }
+# 
+# # ── Helpers ──────────────────────────────────────────────────
+# filtered_path_for <- function(raw_path) {
+#   dir <- dirname(raw_path)
+#   sample <- sub("_irfinder$", "", basename(dir))
+#   file.path(dir, paste0("filtered_ir_nondir_", sample, ".txt"))
+# }
+# 
+# get_testable_introns <- function(raw_paths, min_frac = 0.5) {
+#   filtered_paths <- vapply(raw_paths, filtered_path_for, character(1))
+#   missing <- filtered_paths[!file.exists(filtered_paths)]
+#   if (length(missing) > 0) {
+#     stop("Missing filtered file(s):\n  ", paste(missing, collapse = "\n  "),
+#          "\nRun filter_irfinder.R first for these samples.")
+#   }
+#   id_lists <- lapply(filtered_paths, function(fp) {
+#     df <- read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+#     paste0(df$Gene, "/", df$Chr, ":", df$Start, "-", df$End, ":", df$Strand)
+#   })
+#   all_ids <- unlist(id_lists)
+#   tab <- table(all_ids)
+#   n <- length(filtered_paths)
+#   names(tab)[(tab / n) >= min_frac]
+# }
+# 
+# dir.create("results/SRP141379", recursive = TRUE, showWarnings = FALSE)
+# 
+# # ============================================================
+# # POOLED SAMPLE & METADATA CONFIGURATION (FIXED)
+# # ============================================================
+# 
+# paths_all <- c(
+#   # 6-Hour Timepoints
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204967_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204969_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204971_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204972_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204973_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204977_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204978_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204979_irfinder/IRFinder-IR-nondir.txt",
+#   # 24-Hour Timepoints
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204968_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204970_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204974_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204975_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204976_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204980_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204981_irfinder/IRFinder-IR-nondir.txt",
+#   "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204982_irfinder/IRFinder-IR-nondir.txt"
+# )
+# 
+# # 1. Build base experimental metadata structure
+# experiment_all <- data.frame(
+#   condition = c(rep("DMSO", 2), rep("CC671_3uM", 3), rep("CC671_10uM", 3), 
+#                 rep("DMSO", 2), rep("CC671_3uM", 3), rep("CC671_10uM", 3)),
+#   timepoint = c(rep("6hr", 8), rep("24hr", 8))
+# )
+# 
+# # 2. Build the dataset using a plain intercept-only formula (~1) to bypass early validation
+# metaList_all <- DESeqDataSetFromIRFinder(
+#   filePaths     = paths_all,
+#   designMatrix  = experiment_all,
+#   designFormula = ~ 1
+# )
+# 
+# # 3. Safely extract object, append final_group, and re-apply our target design matrix
+# dds_all_raw <- metaList_all$DESeq2Object
+# 
+# colData(dds_all_raw)$final_group <- factor(
+#   paste(colData(dds_all_raw)$condition, colData(dds_all_raw)$timepoint, colData(dds_all_raw)$IRFinder, sep = "_")
+# )
+# 
+# # Now we safely transition the model over to the no-intercept layout
+# design(dds_all_raw) <- ~ 0 + final_group
+# 
+# # 4. Global QC filter across all 16 files
+# testable_all <- get_testable_introns(paths_all, min_frac = 0.5)
+# message("Combined Analysis: ", length(testable_all), " / ", nrow(dds_all_raw),
+#         " introns pass filter in >=50% of all samples and will be tested.")
+# 
+# dds_all <- dds_all_raw[rownames(dds_all_raw) %in% testable_all, ]
+# dds_all <- DESeq(dds_all)
+# 
+# # Print explicit names available to make sure contrasts match up perfectly
+# levels_available <- resultsNames(dds_all)
+# print("Available coefficients for custom contrasts:")
+# print(levels_available)
+# 
+# # ============================================================
+# # EXTRACTING RESULTS VIA EXPLICIT NUMERIC VECTORS
+# # ============================================================
+# make_ir_contrast <- function(all_names, drug, tp) {
+#   vec <- rep(0, length(all_names))
+#   vec[grep(paste0("final_group", drug, "_", tp, "_IR"),      all_names)] <- 1
+#   vec[grep(paste0("final_group", drug, "_", tp, "_Splice"),  all_names)] <- -1
+#   vec[grep(paste0("final_groupDMSO_", tp, "_IR"),            all_names)] <- -1
+#   vec[grep(paste0("final_groupDMSO_", tp, "_Splice"),        all_names)] <- 1
+#   return(vec)
+# }
+# 
+# # ── 6-Hour Timepoint Contrasts ──────────────────────────────
+# contrast_6hr_3uM  <- make_ir_contrast(levels_available, "CC671_3uM", "6hr")
+# contrast_6hr_10uM <- make_ir_contrast(levels_available, "CC671_10uM", "6hr")
+# 
+# res_6hr_3uM  <- results(dds_all, contrast = contrast_6hr_3uM)
+# res_6hr_10uM <- results(dds_all, contrast = contrast_6hr_10uM)
+# 
+# # ── 24-Hour Timepoint Contrasts ─────────────────────────────
+# contrast_24hr_3uM  <- make_ir_contrast(levels_available, "CC671_3uM", "24hr")
+# contrast_24hr_10uM <- make_ir_contrast(levels_available, "CC671_10uM", "24hr")
+# 
+# res_24hr_3uM  <- results(dds_all, contrast = contrast_24hr_3uM)
+# res_24hr_10uM <- results(dds_all, contrast = contrast_24hr_10uM)
+# 
+# # Save Outputs
+# write.csv(as.data.frame(res_6hr_3uM),   file = "results/SRP141379/CC671_3uM_vs_DMSO_6hr_pooled.csv")
+# write.csv(as.data.frame(res_6hr_10uM),  file = "results/SRP141379/CC671_10uM_vs_DMSO_6hr_pooled.csv")
+# write.csv(as.data.frame(res_24hr_3uM),  file = "results/SRP141379/CC671_3uM_vs_DMSO_24hr_pooled.csv")
+# write.csv(as.data.frame(res_24hr_10uM), file = "results/SRP141379/CC671_10uM_vs_DMSO_24hr_pooled.csv")
+# 
+# # Print Summary Statistics
+# message("6hr — CC671 3uM  vs DMSO: ", sum(res_6hr_3uM$padj  < 0.05, na.rm=TRUE), " significant introns")
+# message("6hr — CC671 10uM vs DMSO: ", sum(res_6hr_10uM$padj < 0.05, na.rm=TRUE), " significant introns")
+# message("24hr — CC671 3uM  vs DMSO: ", sum(res_24hr_3uM$padj  < 0.05, na.rm=TRUE), " significant introns")
+# message("24hr — CC671 10uM vs DMSO: ", sum(res_24hr_10uM$padj < 0.05, na.rm=TRUE), " significant introns")
+# 
+# message("Done!")
+
+Need to consider how I structure this
+Pooling means you've fit one model containing all 16 samples, rather than fitting separate models for:
+
+6 hr only
+24 hr only
+
+or
+
+3 µM only
+10 µM only
+
+But even if you fit separate models, each model would still return one row per retained intron for that model.
+
+Should you analyze each time point separately?
+That depends on your biological question.
+
+Option 1 (your current approach)
+
+You pool all samples and specify contrasts.
+
+Advantages:
+
+More samples contribute to estimating dispersion.
+Better variance estimates.
+Standard DESeq2 practice.
+
+Disadvantage:
+Your filtering is based on all samples together.
+
+Option 2: Separate analyses
+
+For example:
+6 hr only
+24 hr only
+
+Then compare
+
+CC671 3 µM vs DMSO
+CC671 10 µM vs DMSO
+
+within each time point.
+
+Advantages:
+
+Filters are specific to each time point.
+You may detect introns expressed only at one time point.
+
+Disadvantages:
+
+Fewer samples.
+Less stable dispersion estimates.
+What I would change
+
+I actually think the main issue isn't the pooled DESeq analysis.
+
+It's this filter:
+
+testable_all <- get_testable_introns(paths_all, min_frac = 0.5)
+
+and
+
+high_ir_introns_all <- ...
+
+These are computed using all 16 samples together.
+
+Imagine an intron that is only retained at 24 hr.
+
+If it fails your global filter because it isn't present often enough across all 16 samples, it never gets tested—even though it might be biologically interesting at 24 hr.
+
+A better strategy is often:
+
+build the whitelist separately for 6 hr and 24 hr,
+or even separately for each comparison,
+then run DESeq on those subsets.
+Should you make secondary CSVs?
+
+Yes—I think that's a good idea.
+
+You could keep your current pooled analysis as the primary analysis, because it uses all samples to estimate dispersions.
+
+Then create secondary analyses such as:
+
+6 hr only
+DMSO vs 3 µM
+DMSO vs 10 µM
+24 hr only
+DMSO vs 3 µM
+DMSO vs 10 µM
+
+These won't necessarily have different numbers of rows because results() still returns every retained intron, but the set of retained introns may differ if you perform the filtering separately for each subset.
+
+One thing I'd also look at is your design. You're encoding treatment, time point, and IR/Splice into a single final_group factor and then constructing custom contrasts. That can work, but it's more complex than a standard factorial DESeq2 design (e.g. ~ timepoint + condition + IRFinder + interactions). If your goal is to compare IR changes between treatments at each time point, it's worth checking whether this custom contrast is testing exactly the biological effect you intend.
+After running this script you should get:
+results/
+└── SRP141379/
+    ├── 6hr/
+    │   ├── CC671_3uM_vs_DMSO_6hr.csv
+    │   ├── CC671_10uM_vs_DMSO_6hr.csv
+    │   └── IR_PCA_6hr.png
+    │
+    └── 24hr/
+        ├── CC671_3uM_vs_DMSO_24hr.csv
+        ├── CC671_10uM_vs_DMSO_24hr.csv
+        └── IR_PCA_24hr.png
+
+One thing I would check after the first run is the printed output:
+
+xxx introns passed whitelist.
+xxx introns passed IR filter.
+Significant introns (padj < 0.05): xxx
+
+Compare those numbers against your pooled analysis. The important comparison is not the number of rows in the CSVs (those will always equal the tested introns), but whether:
+
+the number of tested introns changes,
+the number of significant introns changes,
+and whether new biologically interesting introns appear in the timepoint-specific results.
+
+Also, one correction from the earlier discussion: this version still uses your custom IRFinder-style DESeq2 setup with sizeFactors(dds) = 1, which is appropriate for the IR-versus-splice comparison. I would keep that consistent with your original analysis rather than allowing standard DESeq2 normalization to alter the interpretation.
+Summaries
+Mean IR ratio per sample across all studies
+#!/usr/bin/env bash
+# ============================================================
+# Summarise mean IR ratio per sample across all studies
+# ============================================================
+set -euo pipefail
+
+OUTFILE="results/IR_summary_all_samples.txt"
+# mkdir -p results
+
+# Write header
+echo -e "Study\tSample\tN_reliable_introns\tMean_IR_ratio\tMedian_IR_ratio\tN_IR_gt0.1\tN_IR_gt0.2" > "$OUTFILE"
+
+find raw_data/IR_quantification -name "IRFinder-IR-nondir.txt" | sort | while read f; do
+  sample=$(echo "$f" | awk -F'/' '{print $(NF-1)}')
+  study=$(echo "$f"  | awk -F'/' '{print $(NF-2)}')
+
+  awk -v samp="$sample" -v study="$study" '
+    NR==1 && $1=="Chr" { next }
+    $21 ~ /LowCover|LowSplicing/ { next }
+    $20 == "NA" || $20 == "" { next }
+    {
+      ir = $20 + 0
+      sum += ir
+      sumsq += ir^2
+      n++
+      vals[n] = ir
+      if (ir > 0.1) gt01++
+      if (ir > 0.2) gt02++
+    }
+    END {
+      if (n == 0) {
+        print study "\t" samp "\t0\tNA\tNA\t0\t0"
+        exit
+      }
+      mean = sum / n
+      # median via sort
+      asort(vals)
+      if (n % 2 == 1) median = vals[int(n/2)+1]
+      else median = (vals[n/2] + vals[n/2+1]) / 2
+      printf "%s\t%s\t%d\t%.4f\t%.4f\t%d\t%d\n", \
+        study, samp, n, mean, median, gt01, gt02
+    }
+  ' "$f"
+done >> "$OUTFILE"
+
+echo "Done! Results written to $OUTFILE"
+cat "$OUTFILE"
+
+Sequence counts
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =====================================================================
+# 01_run_featureCounts.sh
+#
+# Finds every "Sorted.bam" under raw_data/IR_quantification/<STUDY>/*_irfinder/
+# and runs featureCounts on all of them together to build one gene-level
+# count matrix, ready for DESeq2.
+#
+# Strandedness (-s 2, reverse-stranded) was confirmed empirically:
+#   ERP171667 test BAM: -s 2 -> 93.7% assigned (vs 90.0% at -s 0, 7.3% at -s 1)
+#   SRP141379 test BAM: -s 2 -> 92.5% assigned (vs 89.2% at -s 0, 5.8% at -s 1)
+#   featureCounts also auto-detected "reversely stranded" at -s 2 for both.
+#
+# Paired-end mode (-p -P) is used because these libraries
+# ARE paired-end (confirmed in the test run logs: "Paired-end : yes").
+# Running in single-end mode would count individual reads instead of
+# fragments and bias the counts -- don't drop -p here.
+#
+# Requires: subread (featureCounts) on PATH.
+#   conda install -c bioconda subread
+# =====================================================================
+
+# ---- EDIT THESE -------------------------------------------------------
+BASE_DIR="raw_data/IR_quantification"          # top-level folder holding the study dirs
+GTF="/bioinformatics/moniquew/BrCa-Special-Topics/IRFinder-repo/REF/Human-GRCh38-release100/OriginalRef/Homo_sapiens.GRCh38.100.gtf.gz"
+OUT_DIR="/bioinformatics/moniquew/BrCa-Special-Topics/DE_gene_counts_stranded"
+THREADS=16
+STRANDEDNESS=2    # confirmed reverse-stranded, see notes above
+
+# Only these studies are part of this analysis (SRP112607 is excluded).
+STUDIES=("ERP171667" "SRP141379")
+# -------------------------------------------------------------------------
+
+mkdir -p "${OUT_DIR}"
+
+# 1. Collect all Sorted.bam files, only from the studies listed above
+echo "Searching for Sorted.bam files under ${BASE_DIR}/{${STUDIES[*]}} ..."
+BAMS=()
+for study in "${STUDIES[@]}"; do
+    while IFS= read -r -d '' bam; do
+        BAMS+=("${bam}")
+    done < <(find "${BASE_DIR}/${study}" -type f -name "Sorted.bam" -print0)
+done
+IFS=$'\n' BAMS=($(sort <<<"${BAMS[*]}")); unset IFS
+
+if [ "${#BAMS[@]}" -eq 0 ]; then
+    echo "ERROR: No Sorted.bam files found under ${BASE_DIR}" >&2
+    exit 1
+fi
+
+echo "Found ${#BAMS[@]} BAM files:"
+printf '  %s\n' "${BAMS[@]}"
+
+# 2. Build a sample-name manifest (so we can later map featureCounts' ugly
+#    column headers - the full BAM path - back to clean sample IDs).
+#    Sample ID = the *_irfinder directory name, minus the _irfinder suffix.
+MANIFEST="${OUT_DIR}/sample_manifest.tsv"
+echo -e "sample_id\tstudy\tbam_path" > "${MANIFEST}"
+for bam in "${BAMS[@]}"; do
+    irdir=$(basename "$(dirname "${bam}")")           # e.g. SAMPLE1_irfinder
+    sample_id="${irdir%_irfinder}"                     # strip suffix -> SAMPLE1
+    study=$(basename "$(dirname "$(dirname "${bam}")")")
+    echo -e "${sample_id}\t${study}\t${bam}" >> "${MANIFEST}"
+done
+echo "Wrote sample manifest: ${MANIFEST}"
+
+# 3. Run featureCounts (paired-end, reverse-stranded) across all BAMs at once.
+#    -p specifies paired-end data.
+#    -P tells featureCounts to count fragments (read pairs) instead of individual reads.
+#    Running all BAMs in a single multi-threaded call (rather than one at a
+#    time with 1 thread, as in the test runs) should be considerably faster
+#    than the ~100-240 min/file seen in testing.
+echo "Running featureCounts (paired-end, fragment-counting, reverse-stranded) across ${#BAMS[@]} BAMs..."
+featureCounts \
+    -T "${THREADS}" \
+    -p \
+    -P \
+    -B \
+    -s "${STRANDEDNESS}" \
+    -a "${GTF}" \
+    -o "${OUT_DIR}/gene_counts.txt" \
+    "${BAMS[@]}"
+
+echo "Done. Raw featureCounts output: ${OUT_DIR}/gene_counts.txt"
+echo "Summary stats:                  ${OUT_DIR}/gene_counts.txt.summary"
+
+
+
+Gene expression
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =====================================================================
+# 01_run_featureCounts.sh
+#
+# Finds every "Sorted.bam" under raw_data/IR_quantification/<STUDY>/*_irfinder/
+# and runs featureCounts on all of them together to build one gene-level
+# count matrix, ready for DESeq2.
+#
+# Strandedness (-s 2, reverse-stranded) was confirmed empirically:
+#   ERP171667 test BAM: -s 2 -> 93.7% assigned (vs 90.0% at -s 0, 7.3% at -s 1)
+#   SRP141379 test BAM: -s 2 -> 92.5% assigned (vs 89.2% at -s 0, 5.8% at -s 1)
+#   featureCounts also auto-detected "reversely stranded" at -s 2 for both.
+#
+# Paired-end mode (-p -P) is used because these libraries
+# ARE paired-end (confirmed in the test run logs: "Paired-end : yes").
+# Running in single-end mode would count individual reads instead of
+# fragments and bias the counts -- don't drop -p here.
+#
+# Requires: subread (featureCounts) on PATH.
+#   conda install -c bioconda subread
+# =====================================================================
+
+# ---- EDIT THESE -------------------------------------------------------
+BASE_DIR="raw_data/IR_quantification"          # top-level folder holding the study dirs
+GTF="/bioinformatics/moniquew/BrCa-Special-Topics/IRFinder-repo/REF/Human-GRCh38-release100/OriginalRef/Homo_sapiens.GRCh38.100.gtf.gz"
+OUT_DIR="/bioinformatics/moniquew/BrCa-Special-Topics/DE_gene_counts_stranded"
+THREADS=16
+STRANDEDNESS=2    # confirmed reverse-stranded, see notes above
+
+# Only these studies are part of this analysis (SRP112607 is excluded).
+STUDIES=("ERP171667" "SRP141379")
+# -------------------------------------------------------------------------
+
+mkdir -p "${OUT_DIR}"
+
+# 1. Collect all Sorted.bam files, only from the studies listed above
+echo "Searching for Sorted.bam files under ${BASE_DIR}/{${STUDIES[*]}} ..."
+BAMS=()
+for study in "${STUDIES[@]}"; do
+    while IFS= read -r -d '' bam; do
+        BAMS+=("${bam}")
+    done < <(find "${BASE_DIR}/${study}" -type f -name "Sorted.bam" -print0)
+done
+IFS=$'\n' BAMS=($(sort <<<"${BAMS[*]}")); unset IFS
+
+if [ "${#BAMS[@]}" -eq 0 ]; then
+    echo "ERROR: No Sorted.bam files found under ${BASE_DIR}" >&2
+    exit 1
+fi
+
+echo "Found ${#BAMS[@]} BAM files:"
+printf '  %s\n' "${BAMS[@]}"
+
+# 2. Build a sample-name manifest (so we can later map featureCounts' ugly
+#    column headers - the full BAM path - back to clean sample IDs).
+#    Sample ID = the *_irfinder directory name, minus the _irfinder suffix.
+MANIFEST="${OUT_DIR}/sample_manifest.tsv"
+echo -e "sample_id\tstudy\tbam_path" > "${MANIFEST}"
+for bam in "${BAMS[@]}"; do
+    irdir=$(basename "$(dirname "${bam}")")           # e.g. SAMPLE1_irfinder
+    sample_id="${irdir%_irfinder}"                     # strip suffix -> SAMPLE1
+    study=$(basename "$(dirname "$(dirname "${bam}")")")
+    echo -e "${sample_id}\t${study}\t${bam}" >> "${MANIFEST}"
+done
+echo "Wrote sample manifest: ${MANIFEST}"
+
+# 3. Run featureCounts (paired-end, reverse-stranded) across all BAMs at once.
+#    -p specifies paired-end data.
+#    -P tells featureCounts to count fragments (read pairs) instead of individual reads.
+#    Running all BAMs in a single multi-threaded call (rather than one at a
+#    time with 1 thread, as in the test runs) should be considerably faster
+#    than the ~100-240 min/file seen in testing.
+echo "Running featureCounts (paired-end, fragment-counting, reverse-stranded) across ${#BAMS[@]} BAMs..."
+featureCounts \
+    -T "${THREADS}" \
+    -p \
+    -P \
+    -B \
+    -s "${STRANDEDNESS}" \
+    -a "${GTF}" \
+    -o "${OUT_DIR}/gene_counts.txt" \
+    "${BAMS[@]}"
+
+echo "Done. Raw featureCounts output: ${OUT_DIR}/gene_counts.txt"
+echo "Summary stats:                  ${OUT_DIR}/gene_counts.txt.summary"
+
+
+
+DESeq gene expression
+#!/usr/bin/env Rscript
+
+# =====================================================================
+# 02_deseq2_analysis.R
+#
+# Reads the featureCounts output produced by 01_run_featureCounts.sh,
+# merges it with metadata/sample_metadata.tsv (built from
+# metadata_sc5903_mw_de_gene.csv), and runs TWO separate DESeq2 models,
+# one per study, using the dose-separated `condition` column:
+#
+#   1. SRP141379 (CAL51, 6hr + 24hr):
+#        condition levels: DMSO (ref), CC671_3uM, CC671_10uM
+#        design = ~ timepoint_hr + condition
+#        contrasts: CC671_3uM vs DMSO, CC671_10uM vs DMSO
+#        (timepoint included as an additive covariate; the CC-671 doses
+#         are kept separate rather than pooled into a single Treatment
+#         group.)
+#
+#   2. ERP171667 (MDA-MB-231, 24h):
+#        condition levels: DMSO (ref), T025
+#        design = ~ condition
+#        contrast: T025 vs DMSO
+#
+# SRP112607 is not present in metadata_sc5903_mw_de_gene.csv and is
+# therefore excluded automatically.
+#
+# Requires: DESeq2
+#   install.packages("BiocManager")
+#   BiocManager::install("DESeq2")
+# =====================================================================
+
+suppressPackageStartupMessages({
+  library(DESeq2)
+})
+
+# ---- EDIT THESE --------------------------------------------------------
+counts_dir    <- "/bioinformatics/moniquew/BrCa-Special-Topics/DE_gene_counts_stranded"  # OUT_DIR from 01_run_featureCounts.sh
+counts_file   <- file.path(counts_dir, "gene_counts.txt")
+manifest_file <- file.path(counts_dir, "sample_manifest.tsv")
+metadata_file <- "sample_metadata.tsv"    # sample_id / study / timepoint_hr / cell_line / therapy / concentration / exp_design / condition
+
+out_dir <- "deseq2_results"
+# -------------------------------------------------------------------------
+
+dir.create(out_dir, showWarnings = FALSE)
+dir.create(file.path(out_dir, "SRP141379"), showWarnings = FALSE)
+dir.create(file.path(out_dir, "ERP171667"), showWarnings = FALSE)
+
+## 1. Load featureCounts matrix -------------------------------------------
+fc <- read.delim(counts_file, comment.char = "#", check.names = FALSE)
+gene_ids  <- fc$Geneid
+count_mat <- as.matrix(fc[, 7:ncol(fc)])
+rownames(count_mat) <- gene_ids
+
+## 2. Map ugly BAM-path column names -> clean sample IDs ------------------
+manifest <- read.delim(manifest_file, check.names = FALSE)
+path_to_id <- setNames(manifest$sample_id, manifest$bam_path)
+
+matched <- path_to_id[colnames(count_mat)]
+if (any(is.na(matched))) {
+  stop(
+    "Could not map some featureCounts columns to sample IDs via the manifest.\n",
+    "Unmatched columns:\n  ",
+    paste(colnames(count_mat)[is.na(matched)], collapse = "\n  ")
+  )
+}
+colnames(count_mat) <- matched
+
+## 3. Load metadata ---------------------------------------------------------
+metadata <- read.delim(metadata_file, check.names = FALSE)
+rownames(metadata) <- metadata$sample_id
+metadata$timepoint_hr <- factor(metadata$timepoint_hr)
+
+missing_in_meta <- setdiff(colnames(count_mat), rownames(metadata))
+if (length(missing_in_meta) > 0) {
+  message(
+    "Note: dropping counted samples with no metadata entry (e.g. SRP112607, not in metadata_sc5903_mw_de_gene.csv):\n  ",
+    paste(missing_in_meta, collapse = "\n  ")
+  )
+}
+
+run_deseq_model <- function(study_name, design_formula, factor_cols, ref_levels,
+                             contrasts, out_subdir) {
+
+  message("\n=== ", study_name, " ===")
+
+  sub_meta <- metadata[metadata$study == study_name, , drop = FALSE]
+  sub_meta <- sub_meta[rownames(sub_meta) %in% colnames(count_mat), , drop = FALSE]
+
+  missing_counts <- setdiff(rownames(sub_meta), colnames(count_mat))
+  if (length(missing_counts) > 0) {
+    stop(study_name, ": these samples have metadata but no count data:\n  ",
+         paste(missing_counts, collapse = "\n  "))
+  }
+
+  sub_counts <- count_mat[, rownames(sub_meta), drop = FALSE]
+
+  for (col in names(factor_cols)) {
+    sub_meta[[col]] <- factor(sub_meta[[col]])
+    if (!is.null(ref_levels[[col]])) {
+      sub_meta[[col]] <- relevel(sub_meta[[col]], ref = ref_levels[[col]])
+    }
+  }
+
+  dds <- DESeqDataSetFromMatrix(
+    countData = sub_counts,
+    colData   = sub_meta,
+    design    = design_formula
+  )
+  dds <- dds[rowSums(counts(dds)) >= 10, ]
+  dds <- DESeq(dds)
+
+  for (contrast_name in names(contrasts)) {
+    res <- results(dds, contrast = contrasts[[contrast_name]])
+    res_ordered <- res[order(res$padj), ]
+    out_file <- file.path(out_dir, out_subdir, paste0(contrast_name, ".csv"))
+    write.csv(as.data.frame(res_ordered), out_file)
+    message(
+      "  ", contrast_name, ": ",
+      sum(res$padj < 0.05, na.rm = TRUE), " significant genes  -> ", out_file
+    )
+  }
+
+  norm_counts <- counts(dds, normalized = TRUE)
+  write.csv(norm_counts, file.path(out_dir, out_subdir, "normalized_counts.csv"))
+
+  vsd <- vst(dds, blind = TRUE)
+  pdf(file.path(out_dir, out_subdir, "PCA_plot.pdf"))
+  intgroup <- names(factor_cols)
+  print(plotPCA(vsd, intgroup = intgroup))
+  dev.off()
+
+  dds
+}
+
+## 4. SRP141379 -- combined timepoint model, dose-separated condition ------
+dds_141379 <- run_deseq_model(
+  study_name     = "SRP141379",
+  design_formula = ~ timepoint_hr + condition,
+  factor_cols    = list(timepoint_hr = NULL, condition = NULL),
+  ref_levels     = list(timepoint_hr = "6", condition = "DMSO"),
+  contrasts      = list(
+    "CC671_3uM_vs_DMSO"  = c("condition", "CC671_3uM",  "DMSO"),
+    "CC671_10uM_vs_DMSO" = c("condition", "CC671_10uM", "DMSO")
+  ),
+  out_subdir = "SRP141379"
+)
+
+## 5. ERP171667 -- standalone model, dose-separated condition ---------------
+dds_ERP171667 <- run_deseq_model(
+  study_name     = "ERP171667",
+  design_formula = ~ condition,
+  factor_cols    = list(condition = NULL),
+  ref_levels     = list(condition = "DMSO"),
+  contrasts      = list(
+    "T025_vs_DMSO" = c("condition", "T025", "DMSO")
+  ),
+  out_subdir = "ERP171667"
+)
+
+message("\nDone. Results written under: ", out_dir)
+
