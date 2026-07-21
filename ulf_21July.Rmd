@@ -1,0 +1,597 @@
+---
+title: "Meeting Ulf 21/07/2026"
+author: "Monique White"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+library(data.table)
+library(ggpubr)
+library(clusterProfiler)
+library(org.Hs.eg.db) # Human annotation database
+
+## Velde et al. 2025
+Velde_T025_vs_DMSO_1uM_24h <- read_csv("ir_results/ERP171667/T025_vs_DMSO_1uM_24h.csv")
+Velde_T025_vs_DMSO_1uM_24h <- Velde_T025_vs_DMSO_1uM_24h |>
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "1uM",
+    "Study" = "Velde"
+  )
+
+Velde_T025_vs_DMSO_1uM_24h <- Velde_T025_vs_DMSO_1uM_24h |> mutate(EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
+         intron_id = `...1`,
+    direction = case_when(
+      log2FoldChange > 0 ~ "upregulated",
+      log2FoldChange < 0 ~ "downregulated",
+      TRUE ~ "no change"
+    )
+  )
+
+## Zhu et al. 2018 Data
+
+#### Pooled meaning that the IR filtering was calculated on a global list where the intron had to be present in 50% of all 16 samples...
+# CC671_3uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/CC671_3uM_vs_DMSO_6hr.csv")
+# CC671_3uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/CC671_3uM_vs_DMSO_24hr.csv")
+# CC671_10uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/CC671_10uM_vs_DMSO_6hr.csv")
+# CC671_10uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/CC671_10uM_vs_DMSO_24hr.csv")
+
+#Thus, using time specific because the dispersion diagnostics
+
+CC671_3uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/6hr/CC671_3uM_vs_DMSO_6hr.csv")
+CC671_3uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/24hr/CC671_3uM_vs_DMSO_24hr.csv")
+CC671_10uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/6hr/CC671_10uM_vs_DMSO_6hr.csv")
+CC671_10uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/24hr/CC671_10uM_vs_DMSO_24hr.csv")
+
+
+
+CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr|>
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "3uM",
+    "Study" = "Zhu"
+  )
+
+CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr |> mutate(
+    "Hours" = 24,
+    "Concentration" = "3uM",
+    "Study" = "Zhu"
+  )
+
+CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr |> mutate(
+    "Hours" = 6,
+    "Concentration" = "10uM",
+    "Study" = "Zhu"
+  )
+
+CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
+    "Hours" = 24,
+    "Concentration" = "10uM",
+    "Study" = "Zhu"
+  )
+
+#Quality control data
+IR_quantification <- read.delim("IR_summary_all_samples.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+library(readxl)
+metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
+
+IR_quantification <- inner_join(
+  IR_quantification, 
+  metadata_sc5903_mw, 
+  by = c("Sample" = "Irfinder file")
+)
+```
+
+# Intron Retention
+
+```{r echo = FALSE}
+IR_quantification |> 
+  ggplot(aes(x= log(`Sequencing depth (FASTQC)`), y = Mean_IR_ratio, colour = exp_design)) + 
+  geom_point()+
+  facet_wrap(~Study, ncol =1)+
+  theme_bw()
+```
+
+
+What I observe here is that DMSO (Control) typically has lower mean IR ratio than ones treated with the disease. Suggests that drugs work.
+
+```{r echo = FALSE}
+IR_quantification |> 
+  ggplot(aes(x= N_reliable_introns, y = Mean_IR_ratio, colour = exp_design, shape = Study)) + 
+  geom_point(size =3)+
+  theme_bw()+
+  labs(colour = "Treatment",
+       x = "Reliable introns (n)",
+       y = "Mean IR ration")
+```
+
+Doesn't appear to be strong correlation between number of reliable introns and the mean IR ratio. Perhaps weak negative.
+
+```{r echo = FALSE}
+IR_quantification |> 
+  ggplot(aes(x=N_reliable_introns, y=Mean_IR_ratio, colour = `Cell line`))+
+  geom_point(size = 3)+
+  theme_bw()+
+  labs(y= "Mean IR ratio",
+       x = "Reliable introns")+
+  facet_wrap(~exp_design)
+```
+
+
+
+# Intron Retention
+
+## Velde et al. 2026 ERR...
+
+```{r}
+significant_velde_genes <- Velde_T025_vs_DMSO_1uM_24h |> 
+  filter(baseMean > 10, log2FoldChange > 5 | log2FoldChange < -5) |>
+  # filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.05)
+
+volc_data <- Velde_T025_vs_DMSO_1uM_24h %>% 
+  filter(baseMean > 10#, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_velde_genes, color="red")+
+  theme_bw()
+
+# ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+#   geom_point() +
+#   geom_point(data = significant_velde_genes, color="red")+
+#   theme_bw() |> 
+#   ggsave(filename = "velde_ir_volc.pdf", 
+#          height = 150, width = 150, unit = "mm")
+```
+
+## Zhu et al. 2018 SRP141379
+
+Significant de ir 
+filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3)
+filter(padj<0.01)
+
+ir events included in the plot:
+baseMean > 10 
+
+```{r echo = FALSE}
+significant_DE_CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr %>%
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.01)|> 
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "3uM", 
+    "Study" = "Zhu"
+  )
+volc_data <- CC671_3uM_vs_DMSO_6hr %>% 
+  filter(baseMean > 10 #, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_3uM_6hr <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_DE_CC671_3uM_vs_DMSO_6hr, color="red")+
+  theme_bw()+
+  labs(title = "3uM, 6hr")
+
+significant_DE_CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr %>%
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.01)|> 
+  mutate(
+    "Hours" = 24,
+    "Concentration" = "3uM", 
+    "Study" = "Zhu"
+  )
+volc_data <- CC671_3uM_vs_DMSO_24hr %>% 
+  filter(baseMean > 10 #, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_3uM_24hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_DE_CC671_3uM_vs_DMSO_24hr, color="red")+
+  theme_bw()+
+  labs(title = "3uM, 24hr")
+
+significant_DE_CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr %>%
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.01)|> 
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "10uM",
+    "Study" = "Zhu"
+  )
+
+volc_data <- CC671_10uM_vs_DMSO_6hr %>% 
+  filter(baseMean > 10#, 
+         #log2FoldChange > 3 | log2FoldChange < -3
+         ) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_10uM_6hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_DE_CC671_10uM_vs_DMSO_6hr, color="red")+
+  theme_bw()+
+  labs(title = "10uM, 6hr")
+
+
+significant_DE_CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr %>%
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.01) |> 
+  mutate(
+    "Hours" = 24,
+    "Concentration" = "10uM", 
+    "Study" = "Zhu"
+  )
+
+volc_data <- CC671_10uM_vs_DMSO_24hr %>% 
+  filter(baseMean > 10#, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_10uM_24hr <- ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_DE_CC671_10uM_vs_DMSO_24hr, color="red")+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank())+
+  labs(title = "10uM, 24hr")
+```
+
+
+```{r}
+ggarrange(volc_plot_3uM_6hr, volc_plot_10uM_6hr, volc_plot_3uM_24hr, volc_plot_10uM_24hr,
+          ncol =2, nrow = 2,
+          labels = c("A", "B", "C", "D"))
+```
+
+### how intron retention events are diferentially expressed at both 6 hours and 24 hours?
+
+```{r}
+Zhu_DE_IR <- bind_rows(significant_DE_CC671_3uM_vs_DMSO_6hr, significant_DE_CC671_3uM_vs_DMSO_24hr, significant_DE_CC671_10uM_vs_DMSO_6hr, significant_DE_CC671_10uM_vs_DMSO_24hr)
+
+library(stringr)
+
+Zhu_DE_IR <- Zhu_DE_IR %>%
+  mutate(EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
+         intron_id = ...1)
+
+# how many are present in both 6 hours and 24 hours
+DE_iR_among_treatment_filter <- Zhu_DE_IR |> 
+  group_by(intron_id) |> 
+  summarise(Occurrences = n()) |> 
+  filter(Occurrences > 1) |> 
+  pull(intron_id) #468 are repeated in all combinations of drug and timepoint
+
+Zhu_DE_IR |> 
+  group_by(intron_id, Concentration) |> 
+  summarise(Occurrences = n_distinct(Hours)) |> 
+  filter(Occurrences > 1) #|> 
+  #pull(intron_id) 
+#103 are repeated in more than one timepoint, within a concentration
+
+Zhu_DE_IR |> 
+  group_by(intron_id, Concentration) |> 
+  summarise(Occurrences = n_distinct(Hours)) |> 
+  filter(Occurrences == 1) #|> 
+  #pull(intron_id) 
+#1116 introns that occur in only one timepoint for a given concentration
+```
+
+
+```{r}
+combined_data <- bind_rows(significant_DE_CC671_10uM_vs_DMSO_24hr, significant_DE_CC671_10uM_vs_DMSO_6hr, significant_DE_CC671_3uM_vs_DMSO_24hr, significant_DE_CC671_3uM_vs_DMSO_6hr, significant_velde_genes)
+
+combined_data <- combined_data |> 
+  mutate(EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
+         intron_id = `...1`,
+    direction = case_when(
+      log2FoldChange > 0 ~ "upregulated",
+      log2FoldChange < 0 ~ "downregulated",
+      TRUE ~ "no change"
+    )
+  )
+
+shared_de_ir <- combined_data |> group_by(intron_id) |>
+  summarise(count = n_distinct(Study)) |> 
+  filter(count > 1) |> 
+  pull(intron_id) #shared de ir is 199 genes
+
+#combined_data |> filter(intron_id %in% shared_de_ir) |> write.csv(file = "shared_de_ir.csv")
+length(shared_de_ir)
+```
+
+
+## shared de intron retentions between studies gene ontology
+
+Not sure why this is not working. there are 199 IR events, should be many more genes 
+```{r}
+shared_de_ir_df <- combined_data |> filter(intron_id %in% shared_de_ir)
+
+combined_sig_ir <- shared_de_ir_df %>%
+  filter(padj < 0.05) %>%
+  pull(EnsemblID) %>%
+  unique() %>%
+  na.omit()
+
+ego_test <- enrichGO(
+     gene          = combined_sig_ir,
+    OrgDb         = org.Hs.eg.db,
+     keyType       = "ENSEMBL",
+     ont           = "BP",
+     pAdjustMethod = "BH",
+     pvalueCutoff  = 1,
+     qvalueCutoff  = 1
+)
+
+sig_ir <- as.data.frame(ego_test)
+
+dotplot(ego_test)
+```
+
+# Gene Expression
+
+Gene count matrices were generated using the Sorted.bam files from IRFinder, which aligned to the Human-GRCh38-release 100.
+These bam files were converted into a gene count matrix using featureCounts.
+The flags included,
+-p
+-P
+-B
+Meaning only reads where both forward and reverse reads aligned to the genome.
+
+
+## Velde et al. 2026
+
+DEseq was run for these using the following code
+```{r eval = FALSE}
+# ── Custom IRFinder DESeq2 function (Kept for Raw File Parsing) ─────────────
+DESeqDataSetFromIRFinder = function(filePaths, designMatrix, designFormula){
+  res=c()
+  libsz=c()
+  spl=c()
+  irtest=read.table(filePaths[1])
+  if (irtest[1,1]=="Chr"){irtest=irtest[-1,]}
+  irnames=unname(apply(as.matrix(irtest),1,FUN=function(x){return(paste0(x[4],"/",x[1],":",x[2],"-",x[3],":",x[6]))}))
+  n=1
+  for (i in filePaths){
+    print(paste0("processing file ",n," at ",i))
+    irtab=read.table(i)
+    if (irtab[1,1]=="Chr"){irtab=irtab[-1,]}
+    tmp1=as.numeric(as.vector(irtab[,9]))
+    tmp2=as.numeric(as.vector(irtab[,19]))
+    tmp3=tmp1+tmp2
+    tmp4=as.numeric(as.vector(irtab[,17]))
+    tmp5=as.numeric(as.vector(irtab[,18]))
+    tmp6=pmax(tmp4,tmp5, na.rm=T)
+    res=cbind(res,tmp1)
+    libsz=cbind(libsz,tmp2)
+    spl=cbind(spl,tmp6)
+    n=n+1
+  }
+  res.rd=round(res)
+  libsz.rd=round(libsz)
+  spl.rd=round(spl)
+  colnames(res.rd)=paste("intronDepth",as.vector(designMatrix[,1]),sep=".")
+  rownames(res.rd)=irnames
+  colnames(libsz.rd)=paste("totalSplice",as.vector(designMatrix[,1]),sep=".")
+  rownames(libsz.rd)=irnames
+  colnames(spl.rd)=paste("maxSplice",as.vector(designMatrix[,1]),sep=".")
+  rownames(spl.rd)=irnames
+  
+  ir=c(rep("IR",dim(designMatrix)[1]),rep("Splice",dim(designMatrix)[1]))
+  group=rbind(designMatrix,designMatrix)
+  group$IRFinder=ir
+  group$IRFinder=factor(group$IRFinder,levels=c("Splice","IR"))
+  
+  counts.IRFinder=cbind(res.rd,spl.rd)
+  
+  dd = DESeqDataSetFromMatrix(countData = counts.IRFinder, colData = group, design = designFormula)
+  sizeFactors(dd)=rep(1,dim(group)[1])
+  rownames(dd)=irnames
+  final=list(dd,res,libsz,spl)
+  names(final)=c("DESeq2Object","IntronDepth","SpliceDepth","MaxSplice")
+  return(final)
+}
+
+# ── Helpers ──────────────────────────────────────────────────
+# Automatically maps raw paths to their corresponding filtered text file counterpart
+filtered_path_for <- function(raw_path) {
+  dir <- dirname(raw_path)
+  sample <- sub("_irfinder$", "", basename(dir))
+  file.path(dir, paste0("filtered_ir_nondir_", sample, ".txt"))
+}
+
+get_testable_introns <- function(raw_paths, min_frac = 0.5) {
+  filtered_paths <- vapply(raw_paths, filtered_path_for, character(1))
+  missing <- filtered_paths[!file.exists(filtered_paths)]
+  if (length(missing) > 0) {
+    stop("Missing filtered file(s):\n  ", paste(missing, collapse = "\n  "),
+         "\nRun filter_irfinder.R first for these samples.")
+  }
+  id_lists <- lapply(filtered_paths, function(fp) {
+    df <- read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+    paste0(df$Gene, "/", df$Chr, ":", df$Start, "-", df$End, ":", df$Strand)
+  })
+  all_ids <- unlist(id_lists)
+  tab <- table(all_ids)
+  n <- length(filtered_paths)
+  names(tab)[(tab / n) >= min_frac]
+}
+
+dir.create("results/ERP171667", recursive = TRUE, showWarnings = FALSE)
+
+# ==============================================================================
+# ERP171667 DATA ANALYSIS
+# ==============================================================================
+# CORRECTED: Point these directly to the raw files so matrix building functions properly
+paths <- c(
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856082_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856083_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856084_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856085_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856086_irfinder/IRFinder-IR-nondir.txt"),
+  file.path("/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667/ERR14856087_irfinder/IRFinder-IR-nondir.txt")
+)
+
+experiment <- data.frame(
+  condition = factor(
+    c("DMSO","DMSO","DMSO","T025","T025","T025"),
+    levels = c("DMSO","T025")
+  )
+)
+
+# Initialize with interaction formula layout
+metaList <- DESeqDataSetFromIRFinder( 
+  filePaths     = paths,
+  designMatrix  = experiment,
+  designFormula = ~ condition + IRFinder + condition:IRFinder
+)
+
+# ==============================================================================
+# TWO-STAGE FILTERING STEP
+# ==============================================================================
+# Stage 1: Get high quality whitelisted introns from filtered files (min_frac check)
+testable_introns <- get_testable_introns(paths, min_frac = 0.5)
+
+# Map valid row names back to matrices to prevent bounds errors
+intron_raw_mat <- metaList$IntronDepth
+rownames(intron_raw_mat) <- rownames(metaList$DESeq2Object)
+intron_filtered_mat <- intron_raw_mat[testable_introns, ]
+
+splice_raw_mat <- metaList$SpliceDepth
+rownames(splice_raw_mat) <- rownames(metaList$DESeq2Object)
+splice_filtered_mat <- splice_raw_mat[testable_introns, ]
+
+# Stage 2: Calculate actual IR ratios and filter for active signal (IR > 0.1)
+all_ir_ratios <- intron_filtered_mat / (intron_filtered_mat + splice_filtered_mat + 0.01)
+
+# Retain introns where at least 3 samples (50% of cohort) show an active IR ratio > 0.1
+high_ir_introns <- rownames(all_ir_ratios)[rowSums(all_ir_ratios > 0.1) >= 3]
+
+message("ERP171667: ", length(testable_introns), " introns pass quality screening.")
+message("Value Filtering: ", length(high_ir_introns), " / ", length(testable_introns), 
+        " introns also pass baseline expression threshold (IR ratio > 0.1 in >=3 samples).")
+
+# Final clean subset of the dds object
+dds <- metaList$DESeq2Object[rownames(metaList$DESeq2Object) %in% high_ir_introns, ]
+dds <- DESeq(dds)
+
+print("Available coefficients for ERP171667:")
+print(resultsNames(dds))
+
+# Extract the interaction term
+res <- results(dds, name = "conditionT025.IRFinderIR")
+
+write.csv(as.data.frame(res),
+          file = "results/ERP171667/T025_vs_DMSO_1uM_24h.csv")
+
+message("T-025 1uM 24h vs DMSO (Differential IR): ",
+        sum(res$padj < 0.05, na.rm = TRUE),
+        " significant introns")
+```
+
+Then csv was saved, and the remaining analysis was done on my laptop.
+```{r echo = FALSE}
+Velde_gene_de_T025_DMSO <- read_csv("deseq_gene/deseq2_results/ERP171667/T025_vs_DMSO.csv")
+```
+
+Gene included had a base mean expression greater than 10
+Significant (shown in red) represent genes whose base mean was greater than 10, and had a log2FoldChange of 3 or above, or below -3. 
+
+```{r}
+Velde_gene_de_T025_DMSO <- Velde_gene_de_T025_DMSO |> 
+  mutate(
+    "EnsemblID" = `...1`,
+    "Contrast" = "T025_vs_DMSO",
+    "Study" = "Velde",
+    "Hours" = 6,
+    "Concentration" = "1uM")
+
+sig_Velde_gene_de_T025_DMSO <- Velde_gene_de_T025_DMSO |> 
+  filter(baseMean > 10, log2FoldChange > 3 | log2FoldChange < -3) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.01)
+
+volc_data <- Velde_gene_de_T025_DMSO  %>% 
+  filter(baseMean > 10 #, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
+  as.data.frame() %>% 
+  na.omit()
+
+volc_plot_velde <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = sig_Velde_gene_de_T025_DMSO, color="red")+
+  theme_bw()+
+  labs(title = "Differential gene expression, T-025 1uM")
+
+volc_plot_velde
+```
+
+
+```{r}
+upreg_ir_velde <- Velde_T025_vs_DMSO_1uM_24h |> 
+  filter(direction == "upregulated") |> 
+  pull(EnsemblID)
+
+Velde_gene_de_T025_DMSO |> filter(EnsemblID %in% upreg_ir_velde) |> summarise(n = n_distinct(EnsemblID)) 
+```
+1567 genes that have differential gene expression have an intron retention event that is upregulated in treated cells compared to non-treated cells.
+
+```{r}
+Velde_gene_de_T025_DMSO |> filter(EnsemblID %in% upreg_ir_velde,
+                                  log2FoldChange > 0) |> 
+  summarise(n = n_distinct(EnsemblID))
+```
+
+513 genes that are upregulated in treated cells have intron retention events that are upregulated in treated cells compared to non-treated cells.
+
+```{r}
+Velde_gene_de_T025_DMSO |> filter(EnsemblID %in% upreg_ir_velde,
+                                  log2FoldChange < 0) |> 
+  summarise(n = n_distinct(EnsemblID))
+```
+
+1054 genes that are downregulated in treated cells have upregulation of intron retention in them in treated cells compared to non-treated cells.
+
+## Zhu gene expression
+A little more complex, as there are timepoints and concentrations
+

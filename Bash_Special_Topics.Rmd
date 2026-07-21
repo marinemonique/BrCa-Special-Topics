@@ -861,8 +861,10 @@ Then DESeq2 performs hypothesis tests for 8,000 introns, not 180,000.
 The Benjamini–Hochberg multiple testing correction (padj) is also performed across those 8,000 tests, not across all original introns.
 So this filtering strategy reduces the number of hypothesis tests, which generally increases statistical power because you're removing introns that were deemed untestable or essentially unexpressed before running the statistical tests. This kind of independent filtering is a common and appropriate approach, provided the filters are based on signal or quality measures and not on the treatment effect being tested. In your script, the filters are based on quality and baseline IR, not on differences between treatment groups, so they are independent of the differential test itself.
 
-DESeq IR
-Velde et al. 2026
+# DESeq IR
+## Velde et al. 2026
+
+```
 setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 BiocManager::install(c("SummarizedExperiment", "DESeq2"), ask = FALSE)
@@ -1049,7 +1051,7 @@ legend("topright", legend = levels(pca_data$Condition), col = 2:3, pch = 19)
 dev.off()
 
 message("Done! PCA saved to results/ERP171667/IR_Ratio_PCA.png")
-
+```
 
 
 # setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
