@@ -339,12 +339,9 @@ DESeqDataSetFromIRFinder <- function(filePaths,
     res <- c()
     libsz <- c()
     spl <- c()
-
     irtest <- read.table(filePaths[1])
-
     if(irtest[1,1]=="Chr")
         irtest <- irtest[-1,]
-
     irnames <- unname(
         apply(as.matrix(irtest),1,
               function(x){
@@ -354,7 +351,6 @@ DESeqDataSetFromIRFinder <- function(filePaths,
                          x[3],":",
                          x[6])}))
     n <- 1
-
     for(i in filePaths){
         message("Reading sample ",n)
         irtab <- read.table(i)
@@ -372,11 +368,9 @@ DESeqDataSetFromIRFinder <- function(filePaths,
         spl <- cbind(spl,maxSplice)
         n <- n+1
     }
-
     res.rd <- round(res)
     libsz.rd <- round(libsz)
     spl.rd <- round(spl)
-
     rownames(res.rd) <- irnames
     rownames(libsz.rd) <- irnames
     rownames(spl.rd) <- irnames
@@ -425,7 +419,6 @@ DESeqDataSetFromIRFinder <- function(filePaths,
 ############################################################
 ## Helper functions
 ############################################################
-
 filtered_path_for <- function(raw_path){
     dir <- dirname(raw_path)
     sample <- sub("_irfinder$",
@@ -449,12 +442,10 @@ get_testable_introns <- function(raw_paths,
         filtered_paths[
             !file.exists(filtered_paths)]
     if(length(missing)>0){
-
         stop(
             "Missing filtered files:\n",
             paste(missing,
                   collapse="\n"))}
-
     id_lists <- lapply(filtered_paths,function(fp){
         df <- read.delim(
             fp,
@@ -471,15 +462,13 @@ get_testable_introns <- function(raw_paths,
             "-",
             df$End,
             ":",
-            df$Strand
-        )
+            df$Strand        )
     })
     all_ids <- unlist(id_lists)
     tab <- table(all_ids)
     n <- length(filtered_paths)
     names(tab)[(tab/n)>=min_frac]
 }
-
 ############################################################
 ## Contrast builder
 ############################################################
@@ -492,154 +481,112 @@ make_ir_contrast <- function(all_names,
             paste0(
                 "final_group",
                 drug,
-                "_IR"
-            ),
-            all_names
-        )
-    ] <- 1
+                "_IR"),
+            all_names)] <- 1
     vec[
         grep(
             paste0(
                 "final_group",
                 drug,
-                "_Splice"
-            ),
-            all_names)
-    ] <- -1
+                "_Splice"),
+            all_names)] <- -1
 
     vec[
         grep(
             "final_groupDMSO_IR",
-            all_names)
-    ] <- -1
+            all_names)] <- -1
 
     vec[
         grep(
             "final_groupDMSO_Splice",
-            all_names)
-    ] <- 1
+            all_names)] <- 1
     vec
 }
 ############################################################
 ## Main analysis function
 ############################################################
-
 run_timepoint_analysis <- function(paths,
                                    metadata,
                                    label){
-
     message("--------------------------------")
     message("Running analysis for ",label)
     message("--------------------------------")
-
     outdir <- file.path(
         "results",
         "SRP141379",
-        label
-    )
+        label    )
 
     dir.create(outdir,
                recursive=TRUE,
                showWarnings=FALSE)
-
     ########################################################
     ## Load IRFinder data
     ########################################################
-
     metaList <- DESeqDataSetFromIRFinder(
         filePaths=paths,
         designMatrix=metadata,
         designFormula=~1
     )
-
     dds_raw <- metaList$DESeq2Object
 
     intron_raw <- metaList$IntronDepth
     splice_raw <- metaList$SpliceDepth
-
     rownames(intron_raw) <- rownames(dds_raw)
     rownames(splice_raw) <- rownames(dds_raw)
-
     ########################################################
     ## Build whitelist
     ########################################################
-
     whitelist <- get_testable_introns(paths)
-
     intron_filtered <- intron_raw[whitelist,]
     splice_filtered <- splice_raw[whitelist,]
-
     ########################################################
     ## IR ratio filtering
     ########################################################
-
     ir_ratio <-
         intron_filtered /
         (intron_filtered +
              splice_filtered +
              0.01)
-
     high_ir <-
         rownames(ir_ratio)[
-            rowSums(ir_ratio>0.1)>=2
-        ]
-
+            rowSums(ir_ratio>0.1)>=2        ]
     message(
         length(whitelist),
-        " introns passed whitelist."
-    )
-
+        " introns passed whitelist."    )
     message(
         length(high_ir),
-        " introns passed IR filter."
-    )
+        " introns passed IR filter."    )
     ########################################################
     ## Build DESeq object
     ########################################################
-
     dds <- dds_raw[high_ir, ]
-
     colData(dds)$final_group <- factor(
         paste(
             colData(dds)$condition,
             colData(dds)$IRFinder,
-            sep = "_"
-        )
-    )
+            sep = "_"        )    )
 
     design(dds) <- ~0 + final_group
-
     dds <- DESeq(dds)
-
     coef_names <- resultsNames(dds)
-
     message("Available coefficients:")
     print(coef_names)
-
     ########################################################
     ## Determine treatment groups automatically
     ########################################################
-
     treatments <- unique(metadata$condition)
     treatments <- treatments[treatments != "DMSO"]
-
     ########################################################
     ## Run contrasts
     ########################################################
-
     for(drug in treatments){
-
         message("Running contrast: ", drug, " vs DMSO")
-
         contrast <- make_ir_contrast(
             coef_names,
-            drug
-        )
-
+            drug)
         res <- results(
             dds,
-            contrast = contrast
-        )
+            contrast = contrast        )
 
         outfile <- file.path(
             outdir,
@@ -647,20 +594,13 @@ run_timepoint_analysis <- function(paths,
                 drug,
                 "_vs_DMSO_",
                 label,
-                ".csv"
-            )
-        )
+                ".csv"))
 
         write.csv(
-            as.data.frame(res),
-            outfile
-        )
-
-        message(
-            "Significant introns (padj < 0.05): ",
+            as.data.frame(res), outfile)
+        message( "Significant introns (padj < 0.05): ",
             sum(res$padj < 0.05,
-                na.rm = TRUE)
-        )}
+                na.rm = TRUE))}
 
     intron_counts <- intron_raw[high_ir, ]
     splice_counts <- splice_raw[high_ir, ]
@@ -676,84 +616,55 @@ run_timepoint_analysis <- function(paths,
         log_ir[
             apply(log_ir,1,var)>0,
         ]
-
     pca <- prcomp(
         t(log_ir),
-        scale.=TRUE
-    )
+        scale.=TRUE)
 
     percentVar <-
         round(
             100 *
-                (
-                    pca$sdev^2 /
-                        sum(pca$sdev^2)
-                ),
-            1
-        )
+                (pca$sdev^2 / sum(pca$sdev^2)),  1)
 
     pca_df <- data.frame(
         PC1 = pca$x[,1],
         PC2 = pca$x[,2],
-        Condition = metadata$condition
-    )
+        Condition = metadata$condition)
 
     colours <- c(
         "DMSO" = 2,
         "CC671_3uM" = 3,
-        "CC671_10uM" = 4
-    )
+        "CC671_10uM" = 4    )
 
     pca_df$Colour <-
         colours[pca_df$Condition]
 
-    png(
-        file.path(
+    png(file.path(
             outdir,
             paste0(
                 "IR_PCA_",
                 label,
-                ".png"
-            )
-        ),
+                ".png")),
         width = 900,
         height = 700,
-        res = 130
-    )
+        res = 130)
 
     plot(
-        pca_df$PC1,
-        pca_df$PC2,
-
-        col = pca_df$Colour,
-
-        pch = 16,
-
-        cex = 2,
-
-        xlab = paste0(
+        pca_df$PC1, pca_df$PC2, col = pca_df$Colour,
+        pch = 16,         cex = 2,        xlab = paste0(
             "PC1 (",
             percentVar[1],
-            "%)"
-        ),
-
+            "%)"),
         ylab = paste0(
             "PC2 (",
             percentVar[2],
-            "%)"
-        ),
-
+            "%)"),
         main = paste(
             "Intron Retention PCA -",
-            label
-        )
-    )
+            label))
 
     grid(
         lty = "dotted",
-        col = "grey80"
-    )
-
+        col = "grey80"    )
     legend(
         "topleft",
 
@@ -763,16 +674,11 @@ run_timepoint_analysis <- function(paths,
 
         pch = 16,
 
-        title = "Treatment"
-    )
-
+        title = "Treatment"    )
     dev.off()
-
     message("Finished analysis for ", label)
     message("--------------------------------")
-
 }
-
 ############################################################
 ## Sample paths and metadata
 ############################################################
@@ -789,8 +695,7 @@ paths_6hr <- c(
     "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204973_irfinder/IRFinder-IR-nondir.txt",
     "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204977_irfinder/IRFinder-IR-nondir.txt",
     "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204978_irfinder/IRFinder-IR-nondir.txt",
-    "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204979_irfinder/IRFinder-IR-nondir.txt"
-)
+    "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204979_irfinder/IRFinder-IR-nondir.txt")
 
 experiment_6hr <- data.frame(
     condition = c(
@@ -802,15 +707,11 @@ experiment_6hr <- data.frame(
         "CC671_10uM",
         "CC671_10uM",
         "CC671_10uM"),
-
-    timepoint = rep(
-        "6hr",
-        8))
+    timepoint = rep("6hr",8))
 
 ############################################################
 ## 24 hour samples
 ############################################################
-
 paths_24hr <- c(
     "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204968_irfinder/IRFinder-IR-nondir.txt",
     "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204970_irfinder/IRFinder-IR-nondir.txt",
@@ -822,7 +723,6 @@ paths_24hr <- c(
     "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379/SRS3204982_irfinder/IRFinder-IR-nondir.txt"
 )
 
-
 experiment_24hr <- data.frame(
     condition = c(
         "DMSO",
@@ -833,9 +733,7 @@ experiment_24hr <- data.frame(
         "CC671_10uM",
         "CC671_10uM",
         "CC671_10uM"),
-    timepoint = rep(
-        "24hr",
-        8))
+    timepoint = rep("24hr",  8))
 
 message("Starting timepoint-specific IRFinder DESeq2 analyses")
 
@@ -974,7 +872,7 @@ ggarrange(volc_plot_3uM_6hr, volc_plot_10uM_6hr, volc_plot_3uM_24hr, volc_plot_1
           labels = c("A", "B", "C", "D"))
 ```
 
-### how intron retention events are diferentially expressed at both 6 hours and 24 hours?
+### Are intron retention events are diferentially expressed at both 6 hours and 24 hours?
 
 ```{r}
 Zhu_DE_IR <- bind_rows(significant_DE_CC671_3uM_vs_DMSO_6hr, significant_DE_CC671_3uM_vs_DMSO_24hr, significant_DE_CC671_10uM_vs_DMSO_6hr, significant_DE_CC671_10uM_vs_DMSO_24hr)
@@ -1018,8 +916,7 @@ combined_data <- combined_data |>
       log2FoldChange > 0 ~ "upregulated",
       log2FoldChange < 0 ~ "downregulated",
       TRUE ~ "no change"
-    )
-  )
+    ))
 
 shared_de_ir <- combined_data |> group_by(intron_id) |>
   summarise(count = n_distinct(Study)) |> 
@@ -1068,7 +965,6 @@ The flags included,
 -B
 Meaning only reads where both forward and reverse reads aligned to the genome.
 
-
 ## Velde et al. 2026
 ```{r eval = FALSE}
 run_deseq_model <- function(study_name, design_formula, factor_cols, ref_levels,
@@ -1097,8 +993,7 @@ run_deseq_model <- function(study_name, design_formula, factor_cols, ref_levels,
   dds <- DESeqDataSetFromMatrix(
     countData = sub_counts,
     colData   = sub_meta,
-    design    = design_formula
-  )
+    design    = design_formula)
   dds <- dds[rowSums(counts(dds)) >= 10, ]
   dds <- DESeq(dds)
 
@@ -1110,18 +1005,15 @@ run_deseq_model <- function(study_name, design_formula, factor_cols, ref_levels,
     message(
       "  ", contrast_name, ": ",
       sum(res$padj < 0.05, na.rm = TRUE), " significant genes  -> ", out_file
-    )
-  }
+    )}
 
   norm_counts <- counts(dds, normalized = TRUE)
   write.csv(norm_counts, file.path(out_dir, out_subdir, "normalized_counts.csv"))
-
   vsd <- vst(dds, blind = TRUE)
   pdf(file.path(out_dir, out_subdir, "PCA_plot.pdf"))
   intgroup <- names(factor_cols)
   print(plotPCA(vsd, intgroup = intgroup))
   dev.off()
-
   dds
 }
 
@@ -1132,10 +1024,8 @@ dds_ERP171667 <- run_deseq_model(
   factor_cols    = list(condition = NULL),
   ref_levels     = list(condition = "DMSO"),
   contrasts      = list(
-    "T025_vs_DMSO" = c("condition", "T025", "DMSO")
-  ),
-  out_subdir = "ERP171667"
-)
+    "T025_vs_DMSO" = c("condition", "T025", "DMSO")),
+  out_subdir = "ERP171667")
 
 ```
 
