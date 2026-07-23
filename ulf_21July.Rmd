@@ -88,6 +88,84 @@ IR_quantification <- inner_join(
 ```
 
 # Intron Retention
+Test that ir counts are normally distributed
+
+```{r}
+# Split into the two studies
+Zhu <- metadata_sc5903_mw %>% filter(Citation == "Zhu et al. 2018")
+Velde <- metadata_sc5903_mw %>% filter(Citation == "Velde et al. 2026") 
+
+# Velde Mann-Whitney test (rank sum test)
+
+Velde_dir_mw <- wilcox.test(directional_ir_counts ~ exp_design, data = Velde)
+
+print(Velde_dir_mw)
+
+Velde_nondir_mw <- wilcox.test(non_directional_ir_counts ~ exp_design, data = Velde)
+
+print(Velde_nondir_mw)
+```
+
+```{r}
+# Hypothesis, Treatment > control
+levels(factor(Velde$exp_design))
+
+Velde_dir_mw <- wilcox.test(directional_ir_counts ~ exp_design,alternative = "less", data = Velde)
+
+print(Velde_dir_mw)
+
+Velde_nondir_mw <- wilcox.test(non_directional_ir_counts ~ exp_design, alternative = "less", data = Velde)
+
+print(Velde_nondir_mw)
+```
+
+Seems to be lower, but statistical significance is not great because of low sample size
+
+## Zhu intron retention
+```{r}
+Zhu_dir_t <- t.test(directional_ir_counts ~ exp_design, data = Zhu)
+print(Zhu_dir_t)
+
+Zhu_nondir_t <- t.test(non_directional_ir_counts ~ exp_design, data = Zhu)
+print(Zhu_nondir_t)
+
+# Hypothesis, Treatment > control
+levels(factor(Zhu$exp_design))
+
+Zhu_dir_t <- t.test(directional_ir_counts ~ exp_design, alternative = "less", data = Zhu)
+print(Zhu_dir_t)
+
+Zhu_nondir_t <- t.test(non_directional_ir_counts ~ exp_design, alternative = "less", data = Zhu)
+print(Zhu_nondir_t)
+```
+
+### Determine whether time or concentration drive difference in intron retention between control and treatment
+```{r}
+library(glmmTMB)
+
+# Treat Hours and Concentration as factors if you only have a few discrete levels 
+
+# (e.g. 0h/6h/24h, or Low/Med/High). Keep as numeric only if truly continuous/dose-response.
+Zhu$Hours <- factor(Zhu$Hours)
+Zhu$Concentration <- factor(Zhu$Concentration)
+Zhu$group <- interaction(Zhu$exp_design, Zhu$Concentration, drop = TRUE)
+# drop=TRUE removes empty combinations like Treatment.0uM
+
+table(Zhu$group, Zhu$Hours)
+
+model <- glmmTMB(
+  directional_ir_counts ~ group * Hours,
+  family = nbinom2,
+  data = Zhu
+)
+
+summary(model)
+drop1(model, test = "Chisq")
+
+library(emmeans)
+emmeans(model, pairwise ~ group | Hours, type = "response")
+```
+
 
 ```{r echo = FALSE}
 IR_quantification |> 
