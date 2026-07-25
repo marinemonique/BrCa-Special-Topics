@@ -14,8 +14,17 @@ library(ggpubr)
 library(clusterProfiler)
 library(org.Hs.eg.db) # Human annotation database
 
+library(readxl)
+metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
+
+# IR_quantification <- inner_join(
+#   IR_quantification, 
+#   metadata_sc5903_mw, 
+#   by = c("Sample" = "Irfinder file")
+# )
+
 ## Velde et al. 2025
-Velde_T025_vs_DMSO_1uM_24h <- read_csv("ir_results/ERP171667/T025_vs_DMSO_1uM_24h.csv")
+Velde_T025_vs_DMSO_1uM_24h <- read_csv("results/ir/ERP171667/T025_vs_DMSO_1uM_24h.csv")
 Velde_T025_vs_DMSO_1uM_24h <- Velde_T025_vs_DMSO_1uM_24h |>
   mutate(
     "Hours" = 6,
@@ -42,10 +51,10 @@ Velde_T025_vs_DMSO_1uM_24h <- Velde_T025_vs_DMSO_1uM_24h |> mutate(EnsemblID = s
 
 #Thus, using time specific because the dispersion diagnostics
 
-CC671_3uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/6hr/CC671_3uM_vs_DMSO_6hr.csv")
-CC671_3uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/24hr/CC671_3uM_vs_DMSO_24hr.csv")
-CC671_10uM_vs_DMSO_6hr <- read_csv("ir_results/SRP141379/6hr/CC671_10uM_vs_DMSO_6hr.csv")
-CC671_10uM_vs_DMSO_24hr <- read_csv("ir_results/SRP141379/24hr/CC671_10uM_vs_DMSO_24hr.csv")
+CC671_3uM_vs_DMSO_6hr <- read_csv("results/ir/SRP141379/6hr/CC671_3uM_vs_DMSO_6hr.csv")
+CC671_3uM_vs_DMSO_24hr <- read_csv("results/ir/SRP141379/24hr/CC671_3uM_vs_DMSO_24hr.csv")
+CC671_10uM_vs_DMSO_6hr <- read_csv("results/ir/SRP141379/6hr/CC671_10uM_vs_DMSO_6hr.csv")
+CC671_10uM_vs_DMSO_24hr <- read_csv("results/ir/SRP141379/24hr/CC671_10uM_vs_DMSO_24hr.csv")
 
 
 
@@ -75,17 +84,144 @@ CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
   )
 
 #Quality control data
-IR_quantification <- read.delim("IR_summary_all_samples.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
 
-library(readxl)
-metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
+library(readr)
 
-IR_quantification <- inner_join(
-  IR_quantification, 
-  metadata_sc5903_mw, 
-  by = c("Sample" = "Irfinder file")
+srp_combined <- read_tsv(
+  "results/ir/SRP141379_shah_filtered_combined.tsv",
+  show_col_types = FALSE
 )
+
+# quick sanity check
+dim(srp_combined)
+head(srp_combined)
+
+erp_combined <- read_tsv(
+  "results/ir/ERP171667_shah_filtered_combined.tsv",
+  show_col_types = FALSE
+)
+
+# quick sanity check
+dim(erp_combined)
+head(erp_combined)
+
 ```
+
+```{r}
+# ---- 1. Load + add a real intron ID ---------------------------------------
+# erp_combined <- read_tsv("results/ir/ERP171667_shah_filtered_combined.tsv",
+#                           show_col_types = FALSE)
+make_ir_id <- function(df) {
+  paste(df$Name, df$Chr, df$Start, df$End, df$Strand, sep = "|")
+}
+erp_combined$IntronID <- make_ir_id(erp_combined)
+ 
+# ---- 2. Summarise to one value per intron x condition ----------------------
+erp_mean <- erp_combined %>%
+  group_by(IntronID, condition) %>%
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+ 
+# ---- 3. Now pivot_wider works, because each cell has one value ------------
+erp_wide <- erp_mean %>%
+  pivot_wider(
+    id_cols   = IntronID,
+    names_from  = condition,
+    values_from = c(mean_intron_depth, mean_ir_ratio)
+  )
+ 
+# ---- 4. Generic control-vs-treatment scatter function ----------------------
+scatter_control_vs_treatment <- function(wide_df, value_col, control, treatment,
+                                          log_scale = FALSE, title = NULL) {
+  x_col <- paste0(value_col, "_", control)
+  y_col <- paste0(value_col, "_", treatment)
+ 
+  p <- ggplot(wide_df, aes(x = .data[[x_col]], y = .data[[y_col]])) +
+    geom_point(alpha = 0.4, size = 1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    labs(
+      x = paste(value_col, "-", control),
+      y = paste(value_col, "-", treatment),
+      title = title %||% paste(value_col, ":", treatment, "vs", control)
+    ) +
+    theme_minimal()
+ 
+  if (log_scale) {
+    # pseudocount so log10(0) doesn't blow up
+    p <- ggplot(wide_df, aes(x = .data[[x_col]] + 1, y = .data[[y_col]] + 1)) +
+      geom_point(alpha = 0.4, size = 1) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+      scale_x_log10() + scale_y_log10() +
+      labs(
+        x = paste0(value_col, " - ", control, " (log10, +1)"),
+        y = paste0(value_col, " - ", treatment, " (log10, +1)"),
+        title = title %||% paste(value_col, ":", treatment, "vs", control)
+      ) +
+      theme_minimal()
+  }
+  p
+}
+
+ 
+# ---- 5. IntronDepth: DMSO vs T025 (log scale -- depth spans orders of magnitude)
+depth_plot <- scatter_control_vs_treatment(
+  erp_wide, "mean_intron_depth", control = "DMSO", treatment = "T025",
+  log_scale = TRUE
+)
+print(depth_plot)
+#ggsave("results/ir/ERP171667_IntronDepth_scatter.png", depth_plot, width = 6, height = 5)
+ 
+# ---- 6. IRratio: DMSO vs T025 (0-1 scale, no log needed) -------------------
+ir_plot <- scatter_control_vs_treatment(
+  erp_wide, "mean_ir_ratio", control = "DMSO", treatment = "T025",
+  log_scale = FALSE
+)
+print(ir_plot)
+#ggsave("results/ir/ERP171667_IRratio_scatter.png", ir_plot, width = 6, height = 5)
+ 
+# ============================================================
+# SRP141379 has 3 conditions (DMSO, CC671_3uM, CC671_10uM), so make
+# one plot per dose vs DMSO rather than a single pivot.
+# ============================================================
+ 
+srs_combined <- read_tsv("results/ir/SRP141379_shah_filtered_combined.tsv",
+                          show_col_types = FALSE)
+srs_combined$IntronID <- make_ir_id(srs_combined)
+ 
+srs_mean <- srs_combined %>%
+  group_by(IntronID, condition) %>%
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+ 
+srs_wide <- srs_mean %>%
+  pivot_wider(
+    id_cols   = IntronID,
+    names_from  = condition,
+    values_from = c(mean_intron_depth, mean_ir_ratio)
+  )
+ 
+for (dose in c("CC671_3uM", "CC671_10uM")) {
+  p_depth <- scatter_control_vs_treatment(srs_wide, "mean_intron_depth",
+                                           control = "DMSO", treatment = dose,
+                                           log_scale = TRUE)
+  #ggsave(paste0("results/ir/SRP141379_IntronDepth_", dose, "_scatter.png"),         p_depth, width = 6, height = 5)
+  print(p_depth)
+ 
+  p_ir <- scatter_control_vs_treatment(srs_wide, "mean_ir_ratio",
+                                        control = "DMSO", treatment = dose,
+                                        log_scale = FALSE)
+  print(p_ir)
+  #ggsave(paste0("results/ir/SRP141379_IRratio_", dose, "_scatter.png"), p_ir, width = 6, height = 5)
+}
+ 
+```
+
 
 # Intron Retention
 Test that ir counts are normally distributed
@@ -97,32 +233,58 @@ Velde <- metadata_sc5903_mw %>% filter(Citation == "Velde et al. 2026")
 
 # Velde Mann-Whitney test (rank sum test)
 
-Velde_dir_mw <- wilcox.test(directional_ir_counts ~ exp_design, data = Velde)
+Velde_dir_mw <- wilcox.test(n_introns ~ exp_design, data = Velde)
 
 print(Velde_dir_mw)
 
-Velde_nondir_mw <- wilcox.test(non_directional_ir_counts ~ exp_design, data = Velde)
+Velde_nondir_mw <- wilcox.test(n_introns ~ exp_design, data = Velde)
 
 print(Velde_nondir_mw)
+
 ```
 
 ```{r}
 # Hypothesis, Treatment > control
 levels(factor(Velde$exp_design))
 
-Velde_dir_mw <- wilcox.test(directional_ir_counts ~ exp_design,alternative = "less", data = Velde)
+Velde_dir_mw <- wilcox.test(n_introns ~ exp_design,alternative = "less", data = Velde)
 
 print(Velde_dir_mw)
 
-Velde_nondir_mw <- wilcox.test(non_directional_ir_counts ~ exp_design, alternative = "less", data = Velde)
+Velde_nondir_mw <- wilcox.test(n_introns ~ exp_design, alternative = "less", data = Velde)
 
 print(Velde_nondir_mw)
+```
+
+```{r}
+mean_Velde <- Velde |> group_by(exp_design) |> 
+  summarise(mean_dir = mean(n_introns),
+            se_dir = mean(n_introns)/(n()^0.5))
+ggplot()+
+  geom_boxplot(data = Velde, aes(x=exp_design, y = n_introns))+
+  geom_point(data = Velde, aes(x=exp_design, y = n_introns))+
+  geom_point(data=mean_Velde, aes(x=exp_design, y = mean_dir), colour = "red")
 ```
 
 Seems to be lower, but statistical significance is not great because of low sample size
 
 ## Zhu intron retention
+
 ```{r}
+mean_Zhu <- Zhu |> group_by(exp_design, Hours, Concentration) |> 
+  summarise(mean_dir = mean(n_introns),
+            se_dir = mean(n_introns)/(n()^0.5))
+ggplot()+
+  geom_boxplot(data = Zhu, aes(x=exp_design, y = n_introns, group = Hours))+
+  geom_point(data = Zhu, aes(x=exp_design, y = n_introns, group = Hours))+
+  geom_point(data=mean_Zhu, aes(x=exp_design, y = mean_dir, group = Hours), colour = "red")
+```
+
+
+```{r}
+Zhu_dir_t <- t.test(n_introns ~ exp_design, data = Zhu)
+print(Zhu_dir_t)
+
 Zhu_dir_t <- t.test(directional_ir_counts ~ exp_design, data = Zhu)
 print(Zhu_dir_t)
 
@@ -131,6 +293,9 @@ print(Zhu_nondir_t)
 
 # Hypothesis, Treatment > control
 levels(factor(Zhu$exp_design))
+
+Zhu_dir_t <- t.test(n_introns ~ exp_design, alternative = "less", data = Zhu)
+print(Zhu_dir_t)
 
 Zhu_dir_t <- t.test(directional_ir_counts ~ exp_design, alternative = "less", data = Zhu)
 print(Zhu_dir_t)
