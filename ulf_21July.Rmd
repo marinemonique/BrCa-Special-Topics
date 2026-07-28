@@ -123,6 +123,22 @@ erp_combined <- erp_combined |>
 #sanity check
 dim(erp_combined)
 head(erp_combined)
+
+# Delta IR
+delta_erp <- read_tsv(
+  "results/ir/ERP171667_delta_ir.tsv",
+  show_col_types = FALSE
+)
+
+delta_ir_srp_zhu <- read_tsv(
+  "results/ir/SRP141379_delta_ir.tsv",
+  show_col_types = FALSE
+)
+
+delta_ir_srp_iwai <- read_tsv(
+  "results/ir/SRP112607_delta_ir.tsv",
+  show_col_types = FALSE
+)
 ```
 
 ANy genes that had a particularly high number of intron retention events?
