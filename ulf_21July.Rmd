@@ -130,10 +130,16 @@ delta_erp <- read_tsv(
   show_col_types = FALSE
 )
 
+delta_erp <- delta_erp |> mutate(
+    EnsemblID = str_extract(IntronID, "ENSG[0-9]+"))
+
+delta_erp_filter <- delta_erp |> filter(delta_mean_ir_ratio_T025_vs_DMSO != "NA") #4917 introns present in both groups
+
 delta_ir_srp_zhu <- read_tsv(
   "results/ir/SRP141379_delta_ir.tsv",
   show_col_types = FALSE
 )
+
 
 delta_ir_srp_iwai <- read_tsv(
   "results/ir/SRP112607_delta_ir.tsv",
@@ -158,6 +164,8 @@ erp_combined |>
 ```
 
 Interesting that the number of n distinct introns for a given gene seems to be higher in the control (cancer cell lines), compared to the cancer cell line treated with drugs inhibiting the phosphorylation of SRSF proteins by CLKs.
+
+
 
 
 ```{r}
@@ -269,6 +277,42 @@ for (dose in c("CC671_3uM", "CC671_10uM")) {
   ggsave(paste0("results/ir/SRP141379_IRratio_", dose, "_scatter.png"), p_ir, width = 6, height = 5)
 }
 ```
+
+Aim:
+Use the introns that have delta IR > absolute value of 0.1.
+Then do the the mean IR ratio against each other
+```{r}
+erp_mean <- erp_combined |> filter(IntronID %in% delta_erp_filter$IntronID) |>
+  group_by(IntronID, condition) %>%
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ---- 3. Now pivot_wider works, because each cell has one value ------------
+erp_wide <- erp_mean %>%
+  pivot_wider(
+    id_cols   = IntronID,
+    names_from  = condition,
+    values_from =  mean_ir_ratio
+  )
+
+ggplot(erp_wide, aes(x = T025, y = DMSO)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    x = "IR ratio - T025",
+    y = "IR ratio - DMSO"
+  ) +
+  theme_minimal()
+
+```
+
+Introns that have a delta IR ratio of > 0.1, and pass all filtering criteria.
+
+
+
 # Intron Retention
 Test that ir counts are normally distributed
 
