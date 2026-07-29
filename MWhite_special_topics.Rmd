@@ -20,7 +20,56 @@ source("ir_helpers.R")   # for make_ir_id()
 
 metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
 
-## Velde et al. 2025
+delta_ir_srp_iwai <- read_tsv(
+  "results/ir/SRP112607_delta_ir.tsv",
+  show_col_types = FALSE
+)
+```
+
+# 1. Download data
+
+# 2. Fastqc data
+Aim: identify adaptors for trimming prior to running IRFinder.
+
+# 3. Trim data and merge data
+
+# 4. IRFinder
+
+## 4.1. Build reference genome
+
+Using 150 bp mapability files for Liu et al. 2025 (Velde 2026)
+
+Using 100 bp mapability file for Zhu et al. 2018 and ...
+
+
+## 4.2. Run IRFinder
+
+# 5. Shortlisting introns / filtering
+
+## 5.1. 
+First identify introns that have a mean IR ratio > 0.05 in at least one group.
+### Velde et al: either DMSO or T025
+
+### Zhu et al: either CC671 3uM @ 6 hours, CC671 10uM @ 6 hours, CC671 3uM @ 24 hours, or CC671 10uM @ 24 hours.
+
+## 5.2. Within sample filtering
+Met the criteria outlined in Shah et al. 2022.
+1.
+2.
+3.
+4.
+
+
+
+# 6. Differential intron retention events (dIR)
+```{r}
+# Split into the two studies
+Zhu <- metadata_sc5903_mw %>% filter(Citation == "Zhu et al. 2018")
+Velde <- metadata_sc5903_mw %>% filter(Citation == "Velde et al. 2026") 
+```
+
+## 6.1. Velde et al. 2026 (DMSO vs T025)
+```{r import dIR data for Velde et al 2026}
 Velde_T025_vs_DMSO <- read_csv("results/ir/ERP171667/T025_vs_DMSO.csv")
 Velde_T025_vs_DMSO <- Velde_T025_vs_DMSO |>
   mutate(
@@ -34,67 +83,10 @@ Velde_T025_vs_DMSO <- Velde_T025_vs_DMSO |> mutate(EnsemblID = str_extract(`...1
     direction = case_when(
       log2FoldChange > 0 ~ "upregulated",
       log2FoldChange < 0 ~ "downregulated",
-      TRUE ~ "no change"
-    )
+      TRUE ~ "no change")
   )
 
-## Zhu et al. 2018 Data
-CC671_3uM_vs_DMSO_6hr <- read_csv("results/ir/SRP141379/6hr/CC671_3uM_vs_DMSO.csv")
-CC671_3uM_vs_DMSO_24hr <- read_csv("results/ir/SRP141379/24hr/CC671_3uM_vs_DMSO.csv")
-CC671_10uM_vs_DMSO_6hr <- read_csv("results/ir/SRP141379/6hr/CC671_10uM_vs_DMSO.csv")
-CC671_10uM_vs_DMSO_24hr <- read_csv("results/ir/SRP141379/24hr/CC671_10uM_vs_DMSO.csv")
-
-CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr|>
-  mutate(
-    "Hours" = 6,
-    "Concentration" = "3uM",
-    "Study" = "Zhu"
-  )
-
-CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr |> mutate(
-    "Hours" = 24,
-    "Concentration" = "3uM",
-    "Study" = "Zhu"
-  )
-
-CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr |> mutate(
-    "Hours" = 6,
-    "Concentration" = "10uM",
-    "Study" = "Zhu"
-  )
-
-CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
-    "Hours" = 24,
-    "Concentration" = "10uM",
-    "Study" = "Zhu"
-  )
-
-
-
-srp_combined <- read_tsv(
-  "results/ir/SRP141379_shah_filtered_combined.tsv",
-  show_col_types = FALSE
-)
-
-srp_combined <- srp_combined |>
-  mutate(
-    EnsemblID = str_extract(Name, "ENSG[0-9]+"),
-    IntronID  = make_ir_id(pick(everything()))   # Name|Chr|Start|End|Strand
-  )
-
-# ---- distinct introns per gene ---------------------------------------------
-srp_combined |>
-  distinct(EnsemblID, IntronID) |>
-  count(EnsemblID, name = "n_distinct_introns") |>
-  arrange(desc(n_distinct_introns))
-
-#Quality control data
-srp_combined <- srp_combined |> 
-  mutate(EnsemblID = str_extract(`Name`, "ENSG[0-9]+"))
-#sanity check
-dim(srp_combined)
-head(srp_combined)
-
+# Analysing introns where the delta IR ratio was > 0.05
 erp_combined <- read_tsv(
   "results/ir/ERP171667_shah_filtered_combined.tsv",
   show_col_types = FALSE)
@@ -117,33 +109,301 @@ delta_erp <- read_tsv(
 delta_erp <- delta_erp |> mutate(
     EnsemblID = str_extract(IntronID, "ENSG[0-9]+"))
 
-delta_erp_filter <- delta_erp |> filter(delta_mean_ir_ratio_T025_vs_DMSO != "NA") #4917 introns present in both groups
+delta_erp_filter <- delta_erp |> filter(delta_mean_ir_ratio_T025_vs_DMSO != "NA" &                                        delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
+                                        delta_mean_ir_ratio_T025_vs_DMSO <= -0.1)  #4917 introns present in both groups, but 1729 introns that have a delta IR ratio of greater than absolute 0.1
+
+```
+
+Aim:
+Use the introns that have delta IR > absolute value of 0.1.
+Then do the the mean IR ratio against each other
+```{r}
+erp_mean <- erp_combined |> filter(IntronID %in% delta_erp_filter$IntronID) |>
+  group_by(IntronID, condition) %>%
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ---- 3. Now pivot_wider works, because each cell has one value ------------
+erp_wide <- erp_mean %>%
+  pivot_wider(
+    id_cols   = IntronID,
+    names_from  = condition,
+    values_from =  mean_ir_ratio
+  )
+
+ggplot(erp_wide, aes(x = T025, y = DMSO)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    x = "IR ratio - T025",
+    y = "IR ratio - DMSO"
+  ) +
+  theme_minimal()
+```
+
+Aim: 
+```{r}
+mean_Velde <- Velde |>
+  group_by(exp_design) |>
+  summarise(
+    mean_dir = mean(n_introns),
+    se_dir   = sd(n_introns) / sqrt(n()),   # sd / sqrt(n)
+    .groups  = "drop"
+  )
+
+ggplot() +
+  #geom_boxplot(data = Velde, aes(x = exp_design, y = n_introns)) +
+  geom_jitter(data = Velde, aes(x = exp_design, y = n_introns), width = 0.1) +
+  geom_point(data = mean_Velde, aes(x = exp_design, y = mean_dir, colour = exp_design)) +
+  geom_errorbar(
+    data = mean_Velde,
+    aes(x = exp_design, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir, colour = exp_design), width = 0.2)+
+  theme_bw()+
+  labs(y = "Number of intron retention events", colour = "")+
+  theme(panel.grid.major.x = element_blank())
+```
+
+## 6.2. Zhu et al. 2018
+```{r import dIR data for Zhu et al. 2018}
+CC671_3uM_vs_DMSO_6hr <- read_csv("results/ir/SRP141379/6hr/CC671_3uM_vs_DMSO.csv")
+CC671_3uM_vs_DMSO_24hr <- read_csv("results/ir/SRP141379/24hr/CC671_3uM_vs_DMSO.csv")
+CC671_10uM_vs_DMSO_6hr <- read_csv("results/ir/SRP141379/6hr/CC671_10uM_vs_DMSO.csv")
+CC671_10uM_vs_DMSO_24hr <- read_csv("results/ir/SRP141379/24hr/CC671_10uM_vs_DMSO.csv")
+
+CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr|>
+  mutate(
+    "Hours" = 6,
+    "Concentration" = "3uM",
+    "Study" = "Zhu")
+
+CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr |> mutate(
+    "Hours" = 24,
+    "Concentration" = "3uM",
+    "Study" = "Zhu")
+
+CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr |> mutate(
+    "Hours" = 6,
+    "Concentration" = "10uM",
+    "Study" = "Zhu")
+
+CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
+    "Hours" = 24,
+    "Concentration" = "10uM",
+    "Study" = "Zhu")
+
+# Filtering of delta IR
+srp_combined <- read_tsv(
+  "results/ir/SRP141379_shah_filtered_combined.tsv",
+  show_col_types = FALSE)
+
+srp_combined <- srp_combined |>
+  mutate(
+    EnsemblID = str_extract(Name, "ENSG[0-9]+"),
+    IntronID  = make_ir_id(pick(everything()))   # Name|Chr|Start|End|Strand
+  )
+
+# ---- distinct introns per gene ---------------------------------------------
+srp_combined |>
+  distinct(EnsemblID, IntronID) |>
+  count(EnsemblID, name = "n_distinct_introns") |>
+  arrange(desc(n_distinct_introns))
+
+#Quality control data
+srp_combined <- srp_combined |> 
+  mutate(EnsemblID = str_extract(`Name`, "ENSG[0-9]+"))
+#sanity check
+dim(srp_combined)
+head(srp_combined)
+
 
 delta_ir_srp_zhu <- read_tsv(
-  "results/ir/SRP141379_delta_ir.tsv",
-  show_col_types = FALSE
-)
-
-
-delta_ir_srp_iwai <- read_tsv(
-  "results/ir/SRP112607_delta_ir.tsv",
+  "results/ir/SRP141379_delta_ir_by_timepoint.tsv",
   show_col_types = FALSE
 )
 ```
 
-# 1. Download data
+Aim: Number of intron retention events observed per sample.
 
-# 2. Fastqc data
-Aim: identify adaptors for trimming prior to running IRFinder.
+```{r}
+mean_Zhu <- Zhu |> group_by(exp_design, Hours, Concentration) |> 
+  summarise(
+    mean_dir = mean(n_introns),
+    se_dir   = sd(n_introns) / sqrt(n()),   # sd / sqrt(n)
+    .groups  = "drop"
+  )
 
-# 3. Trim data and merge data
+ggplot() +
+  #geom_boxplot(data = Zhu, aes(x = exp_design, y = n_introns)) +
+  geom_jitter(data = Zhu, aes(x = Concentration, y = n_introns), width = 0.1) +
+  geom_point(data = mean_Zhu, aes(x = Concentration, y = mean_dir, colour = exp_design)) +
+  geom_errorbar(
+    data = mean_Zhu,
+    aes(x = Concentration, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir, colour = exp_design), width = 0.2
+  ) +
+  facet_wrap(~ Hours)+
+  theme_bw()+
+  labs(y = "Number of intron retention events", colour = "", x = "Concentration [CC671]")+
+  theme(panel.grid.major.x = element_blank())
+```
 
-# 4. IRFinder
 
-## 4.1. Build reference genome
+### CC671 3uM @ 6 hours
+```{r}
+# 6 hours, 3uM
+delta_zhu_6hr_3uM_filter <- delta_ir_srp_zhu |> filter(hours == 6,
+                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO != "NA" & #8786 introns present in both groups
+                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1) #1268 introns
 
-## 4.2. Run IRFinder
+zhu_mean_6hr_3uM <- srp_combined |> filter(IntronID %in% delta_zhu_6hr_3uM_filter$IntronID) |>
+  group_by(IntronID, condition) %>%
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop"
+  )
 
-# 5. Shortlisting introns / filtering
+zhu_wide_6hr_3uM <- zhu_mean_6hr_3uM %>%
+  pivot_wider(
+    id_cols   = IntronID,
+    names_from  = condition,
+    values_from =  mean_ir_ratio
+  )
 
-# 6. 
+ir_ratio_zhu.1 <- ggplot(zhu_wide_6hr_3uM, aes(x = CC671_3uM, y = DMSO)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    x = "IR ratio - CC671 3uM",
+    y = "IR ratio - DMSO",
+    title = "6 hours"
+  ) +
+  theme_minimal()
+
+ir_ratio_zhu.1
+```
+
+
+### CC671 10uM @ 6 hours
+```{r}
+# 6 hours, 10uM
+delta_zhu_6hr_10uM_filter <- delta_ir_srp_zhu |> filter(hours == 6, delta_mean_ir_ratio_CC671_10uM_vs_DMSO != "NA" & # 8548 introns
+                                                          delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1) #1682 introns
+
+zhu_mean_6hr_10uM <- srp_combined |> filter(IntronID %in% delta_zhu_6hr_10uM_filter$IntronID) |>
+  group_by(IntronID, condition) %>%
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+zhu_wide_6hr_10uM <- zhu_mean_6hr_10uM %>%
+  pivot_wider(
+    id_cols   = IntronID,
+    names_from  = condition,
+    values_from =  mean_ir_ratio
+  )
+
+ir_ratio_zhu.2 <- ggplot(zhu_wide_6hr_10uM, aes(x = CC671_10uM, y = DMSO)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    x = "IR ratio - CC671 10uM",
+    y = "IR ratio - DMSO",
+    title = "6 hours"
+  ) +
+  theme_minimal()
+
+ir_ratio_zhu.2
+```
+
+### CC671 3uM @ 24 hours
+
+```{r}
+# 24 hours, 3uM
+delta_zhu_24hr_3uM_filter <- delta_ir_srp_zhu |> filter(hours == 24,
+                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO != "NA" & #9302 introns present in both groups
+                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1) #773 introns 
+
+zhu_mean_24hr_3uM <- srp_combined |> filter(IntronID %in% delta_zhu_24hr_3uM_filter$IntronID) |>
+  group_by(IntronID, condition) %>%
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+zhu_wide_24hr_3uM <- zhu_mean_24hr_3uM %>%
+  pivot_wider(
+    id_cols   = IntronID,
+    names_from  = condition,
+    values_from =  mean_ir_ratio
+  )
+
+ir_ratio_zhu.3 <- ggplot(zhu_wide_24hr_3uM, aes(x = CC671_3uM, y = DMSO)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    x = "IR ratio - CC671 3uM",
+    y = "IR ratio - DMSO",
+    title = "24 hours"
+  ) +
+  theme_minimal()
+
+ir_ratio_zhu.3
+```
+
+
+### CC671 10uM @ 24 hours
+
+```{r}
+# 24 hours, 10um
+delta_zhu_24hr_10uM_filter <- delta_ir_srp_zhu |> filter(hours == 24, delta_mean_ir_ratio_CC671_10uM_vs_DMSO != "NA" & # 9288 differentially expressed
+                                                 delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1) # 856 introns         
+
+zhu_mean_24hr_10uM <- srp_combined |> filter(IntronID %in% delta_zhu_24hr_10uM_filter$IntronID) |>
+  group_by(IntronID, condition) %>%
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ---- 3. Now pivot_wider works, because each cell has one value ------------
+zhu_wide_24hr_10uM <- zhu_mean_24hr_10uM %>%
+  pivot_wider(
+    id_cols   = IntronID,
+    names_from  = condition,
+    values_from =  mean_ir_ratio
+  )
+
+ir_ratio_zhu.4 <- ggplot(zhu_wide_24hr_10uM, aes(x = CC671_10uM, y = DMSO)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    x = "IR ratio - CC671 10uM",
+    y = "IR ratio - DMSO",
+    title = "24 hours"
+  ) +
+  theme_minimal()
+
+ir_ratio_zhu.4
+```
+
+
+# 7. Differential gene expression (dGE)
+
+## 7.1. Velde et al. 2026 (DMSO vs T025)
+
+## 7.2. Zhu et al. 2018
+### CC671 3uM @ 6 hours
+
+### CC671 10uM @ 6 hours
+
+### CC671 3uM @ 24 hours
+
+### CC671 10uM @ 24 hours
+
