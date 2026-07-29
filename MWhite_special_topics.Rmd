@@ -30,18 +30,49 @@ delta_ir_srp_iwai <- read_tsv(
 # 2. Fastqc data
 Aim: identify adaptors for trimming prior to running IRFinder.
 
-# 3. Trim data and merge data
+
+# 3. Preparing data for IRFinder
+## Trimming adaptors
+Used cutadapt to trim the 15bp adaptors from all samples
+
+## Merging lanes
+Zhu et al had samples spread across multiple lanes, and thus required merging
+
+## fastqc of cleaned data
 
 # 4. IRFinder
 
 ## 4.1. Build reference genome
 
 Using 150 bp mapability files for Liu et al. 2025 (Velde 2026)
+```{r build reference genome with 150bp mapability files}
+
+```
+
 
 Using 100 bp mapability file for Zhu et al. 2018 and ...
+```{r build reference genome with 100bp mapability files}
 
+```
 
 ## 4.2. Run IRFinder
+
+### Velde et al. 2026
+
+```{r run IRFinder for ERP171667}
+
+```
+
+### Zhu et al. 2018
+```{r run IRFinder for SRP141379}
+
+```
+
+### Iwai et al. 2018
+```{r run IRFinder for SRP112607}
+
+```
+
 
 # 5. Shortlisting introns / filtering
 
@@ -417,9 +448,9 @@ drop1(model, test = "Chisq")
 
 library(emmeans)
 emmeans(model, pairwise ~ group | Hours, type = "response")
+```
 
-# 7. Differential gene expression (dGE)
-
+# 7. Gene ontology of dIR
 ## 7.1. Velde et al. 2026 (DMSO vs T025)
 
 ## 7.2. Zhu et al. 2018
@@ -431,3 +462,29 @@ emmeans(model, pairwise ~ group | Hours, type = "response")
 
 ### CC671 10uM @ 24 hours
 
+# 8. Differential gene expression (dGE)
+
+## 8.1. Velde et al. 2026 (DMSO vs T025)
+
+## 8.2. Zhu et al. 2018
+### CC671 3uM @ 6 hours
+
+### CC671 10uM @ 6 hours
+
+### CC671 3uM @ 24 hours
+
+### CC671 10uM @ 24 hours
+
+
+# 9. Gene ontology of dEGs
+
+## 9.1. Velde et al. 2026 (DMSO vs T025)
+
+## 9.2. Zhu et al. 2018
+### CC671 3uM @ 6 hours
+
+### CC671 10uM @ 6 hours
+
+### CC671 3uM @ 24 hours
+
+### CC671 10uM @ 24 hours
