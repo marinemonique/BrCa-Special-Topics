@@ -17,7 +17,6 @@ library(org.Hs.eg.db) # Human annotation database
 library(readxl)
 source("ir_helpers.R")   # for make_ir_id()
 
-
 metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
 
 delta_ir_srp_iwai <- read_tsv(
@@ -393,6 +392,31 @@ ir_ratio_zhu.4 <- ggplot(zhu_wide_24hr_10uM, aes(x = CC671_10uM, y = DMSO)) +
 ir_ratio_zhu.4
 ```
 
+### Determine whether time or concentration drive difference in intron retention between control and treatment
+```{r}
+library(glmmTMB)
+
+# Treat Hours and Concentration as factors if you only have a few discrete levels 
+
+# (e.g. 0h/6h/24h, or Low/Med/High). Keep as numeric only if truly continuous/dose-response.
+Zhu$Hours <- factor(Zhu$Hours)
+Zhu$Concentration <- factor(Zhu$Concentration)
+Zhu$group <- interaction(Zhu$exp_design, Zhu$Concentration, drop = TRUE)
+# drop=TRUE removes empty combinations like Treatment.0uM
+
+table(Zhu$group, Zhu$Hours)
+
+model <- glmmTMB(
+  directional_ir_counts ~ group * Hours,
+  family = nbinom2,
+  data = Zhu
+)
+
+summary(model)
+drop1(model, test = "Chisq")
+
+library(emmeans)
+emmeans(model, pairwise ~ group | Hours, type = "response")
 
 # 7. Differential gene expression (dGE)
 
