@@ -95,6 +95,8 @@ Met the criteria outlined in Shah et al. 2022.
 ```{r}
 # Split into the two studies
 Zhu <- metadata_sc5903_mw %>% filter(Citation == "Zhu et al. 2018")
+Zhu <- Zhu |>  mutate(Concentration = factor(Concentration, levels = c("0uM", "3uM", "10uM"), ordered = TRUE))
+
 Velde <- metadata_sc5903_mw %>% filter(Citation == "Velde et al. 2026") 
 ```
 
@@ -152,7 +154,7 @@ Summary (ERP171667):
 Aim:
 Use the introns that have delta IR > absolute value of 0.1.
 Then do the the mean IR ratio against each other
-```{r}
+```{r volcano plot for dIR in velde et al. 2026}
 erp_mean <- erp_combined |> 
   filter(IntronID %in% delta_erp_filter$IntronID) |> #only including introns that passed the structural filtering, and the group mean IR ratio filtering
   group_by(IntronID, condition) %>%
@@ -212,7 +214,6 @@ Figure X. Number of intron retention events passing filtering criteria (structur
 
 ### Volcano plot
 ```{r}
-
 # merge delta IR and the dIR data
 volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
 significant_velde_introns <- volcano_velde |>
@@ -243,6 +244,39 @@ ggplot(volc_data,aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = -log10(padj))) +
 ```
 
 Figure X. Volcano plot of delta mean ir ratio in cells treated with T025 (n=3) and xx cells treated with DMSO (n =3) after 24 hours. Significant intron retention events are shown in red, where significance indicates the intron had a basemean > 10, the delta IR ratio was greater than 0.25, or less than -0.25, and the p-adjust (calculated in DESeq2 when calculating Log fold change) was < 0.001.
+
+```{r}
+# merge delta IR and the dIR data
+volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
+significant_velde_introns <- volcano_velde |>
+  filter(baseMean > 10, delta_mean_ir_ratio_T025_vs_DMSO >= 0.25 | delta_mean_ir_ratio_T025_vs_DMSO <= -0.25) |>
+  # filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+  as.data.frame() %>% 
+  na.omit() %>% 
+  #rownames_to_column("GeneID") %>% 
+  arrange(padj) %>% 
+  filter(padj<0.001)
+
+#1344 introns if using delta ir of 0.1
+#254 if using delta ir of 0.25
+
+
+volc_data <- volcano_velde%>% 
+  filter(baseMean > 10#, 
+         #log2FoldChange > 1 | log2FoldChange < -1
+         ) |>
+  as.data.frame() %>% 
+  na.omit()
+
+ggplot(volc_data,aes(x = log2FoldChange, y = -log10(padj))) + 
+  geom_point() +
+  geom_point(data = significant_velde_introns, color="red")+
+  theme_bw()
+```
+
+Figure X. Volcano plot of log2FoldChange of intron expression in xx cells treated with T025 (n=3) and treated with DMSO (n =3) after 24 hours. Significant intron retention events are shown in red, where significance indicates the intron had a basemean > 10, the delta IR ratio was greater than 0.25, or less than -0.25, and the p-adjust (calculated in DESeq2 when calculating Log fold change) was < 0.001.
+
+The coefficient conditionT025.IRFinderIR is testing the interaction between condition and the IR-vs-Splice factor — it's asking "does the ratio of intron-retention reads to spliced reads differ between T025 and DMSO?" A positive log2FoldChange means that ratio is higher in T025 than in DMSO — i.e., more intron retention (a higher IR ratio) in T025-treated cells relative to control.
 
 *note - how can a padjust be so significant when the delta mean ir ratio is 0. I know padjust is calculated based on the log fold change...*
 
@@ -315,6 +349,7 @@ mean_Zhu <- Zhu |> group_by(exp_design, Hours, Concentration) |>
     se_dir   = sd(n_introns_sample_after_group_filter) / sqrt(n()),   # sd / sqrt(n)
     .groups  = "drop"
   )
+
 
 ggplot() +
   #geom_boxplot(data = Zhu, aes(x = exp_design, y = n_introns)) +
@@ -510,31 +545,31 @@ dIR_6hrs_CC671_3uM_vs_DMSO <- read_csv("results/ir/SRP141379/6hr/CC671_3uM_vs_DM
   mutate(intron_id = `...1`)
 
 delta_ir_6hr_3uM <- delta_ir_srp_zhu |> filter(hours == 6)
-volcano_zhu_6hr_3uM <- left_join(dIR_6hrs_CC671_3uM_vs_DMSO, delta_ir_6hr_3uM, join_by(intron_id == IntronID))
 
+volcano_zhu_6hr_3uM <- left_join(
+  dIR_6hrs_CC671_3uM_vs_DMSO,
+  delta_ir_6hr_3uM,
+  join_by(intron_id == IntronID)
+) |>
+  mutate(
+    meets_delta = delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.25 |
+                  delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.25,
+    significance = case_when(
+      meets_delta & padj < 0.001 ~ "red",
+      meets_delta & padj < 0.01  ~ "pink",
+      meets_delta & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "black"
+    )
+  )
 
-significant_introns <- volcano_zhu_6hr_3uM |>
-  filter(baseMean > 10, delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.25 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.25) |>
-  # filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
-  as.data.frame() %>% 
-  na.omit() %>% 
-  #rownames_to_column("GeneID") %>% 
-  arrange(padj) %>% 
-  filter(padj<0.05)
-
-#879 introns if using delta ir of 0.1
-#97 if using delta ir of 0.25
-
-volc_data <- volcano_zhu_6hr_3uM%>% 
-  filter(baseMean > 10#, 
-         #log2FoldChange > 1 | log2FoldChange < -1
-         ) |>
-  as.data.frame() %>% 
+volc_data <- volcano_zhu_6hr_3uM |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
   na.omit()
 
-ggplot(volc_data,aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj))) + 
+ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj), colour = significance)) +
   geom_point() +
-  geom_point(data = significant_introns, color="red")+
+  scale_colour_identity() +
   theme_bw()
 
 ```
@@ -542,14 +577,140 @@ ggplot(volc_data,aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj)
 
 #### CC671 10uM @ 6 hours
 ```{r}
-dIR_6hrs_CC671_10uM_vs_DMSO <- read_csv("results/ir/SRP141379/6hr/CC671_10uM_vs_DMSO.csv")
+dIR_6hrs_CC671_10uM_vs_DMSO <- read_csv("results/ir/SRP141379/6hr/CC671_10uM_vs_DMSO.csv") |> 
+  mutate(intron_id = `...1`)
+
+
+delta_ir_6hr_10uM <- delta_ir_srp_zhu |> filter(hours == 6)
+
+volcano_zhu_6hr_10uM <- left_join(
+  dIR_6hrs_CC671_10uM_vs_DMSO,
+  delta_ir_6hr_10uM,
+  join_by(intron_id == IntronID)
+) |>
+  mutate(
+    meets_delta = delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.25 |
+                  delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.25,
+    significance = case_when(
+      meets_delta & padj < 0.001 ~ "red",
+      meets_delta & padj < 0.01  ~ "pink",
+      meets_delta & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "black"
+    )
+  )
+
+volc_data <- volcano_zhu_6hr_10uM |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
+  na.omit()
+
+ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj), colour = significance)) +
+  geom_point() +
+  scale_colour_identity() +
+  theme_bw()
+
+# delta_ir_6hr_10uM <- delta_ir_srp_zhu |> filter(hours == 6)
+# volcano_zhu_6hr_10uM <- left_join(dIR_6hrs_CC671_10uM_vs_DMSO, delta_ir_6hr_10uM, join_by(intron_id == IntronID))
+# 
+# 
+# significant_introns <- volcano_zhu_6hr_10uM |>
+#   filter(baseMean > 10, delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.25 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.25) |>
+#   # filter(baseMean > 10, log2FoldChange > 1 | log2FoldChange < -1) |> 
+#   as.data.frame() %>% 
+#   na.omit() %>% 
+#   #rownames_to_column("GeneID") %>% 
+#   arrange(padj) %>% 
+#   filter(padj<0.001)
+# 
+# 
+# # 95 when using the padjust of 0.001
+# 
+# volc_data <- volcano_zhu_6hr_10uM %>% 
+#   filter(baseMean > 10#, 
+#          #log2FoldChange > 1 | log2FoldChange < -1
+#          ) |>
+#   as.data.frame() %>% 
+#   na.omit()
+# # has 7528 observations...
+# 
+# ggplot(volc_data,aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj))) + 
+#   geom_point() +
+#   geom_point(data = significant_introns, color="red")+
+#   theme_bw()
 ```
 
 
 #### CC671 3uM @ 24 hours
 
+```{r}
+dIR_24hrs_CC671_3uM_vs_DMSO <- read_csv("results/ir/SRP141379/24hr/CC671_3uM_vs_DMSO.csv") |> 
+  mutate(intron_id = `...1`)
+
+delta_ir_24hr_3uM <- delta_ir_srp_zhu |> filter(hours == 24)
+
+
+volcano_zhu_24hr_3uM <- left_join(
+  dIR_24hrs_CC671_3uM_vs_DMSO,
+  delta_ir_24hr_3uM,
+  join_by(intron_id == IntronID)
+) |>
+  mutate(
+    meets_delta = delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.25 |
+                  delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.25,
+    significance = case_when(
+      meets_delta & padj < 0.001 ~ "red",
+      meets_delta & padj < 0.01  ~ "pink",
+      meets_delta & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "black"
+    )
+  )
+
+volc_data <- volcano_zhu_24hr_3uM |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
+  na.omit()
+
+ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj), colour = significance)) +
+  geom_point() +
+  scale_colour_identity() +
+  theme_bw()
+
+```
+
 #### CC671 10uM @ 24 hours
 
+```{r}
+dIR_24hrs_CC671_10uM_vs_DMSO <- read_csv("results/ir/SRP141379/24hr/CC671_10uM_vs_DMSO.csv") |> 
+  mutate(intron_id = `...1`)
+
+delta_ir_24hr_10uM <- delta_ir_srp_zhu |> filter(hours == 24)
+
+volcano_zhu_24hr_10uM <- left_join(
+  dIR_24hrs_CC671_10uM_vs_DMSO,
+  delta_ir_24hr_10uM,
+  join_by(intron_id == IntronID)
+) |>
+  mutate(
+    meets_delta = delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.25 |
+                  delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.25,
+    significance = case_when(
+      meets_delta & padj < 0.001 ~ "red",
+      meets_delta & padj < 0.01  ~ "pink",
+      meets_delta & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "black"
+    )
+  )
+
+volc_data <- volcano_zhu_24hr_10uM |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
+  na.omit()
+
+ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj), colour = significance)) +
+  geom_point() +
+  scale_colour_identity() +
+  theme_bw()
+```
 
 # 7. Gene ontology of dIR
 ## 7.1. Velde et al. 2026 (DMSO vs T025)
