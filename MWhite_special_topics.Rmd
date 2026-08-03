@@ -152,7 +152,7 @@ Summary (ERP171667):
 Aim:
 Use the introns that have delta IR > absolute value of 0.1.
 Then do the the mean IR ratio against each other
-```{r volcano plot for dIR in velde et al. 2026}
+```{r eval=FALSE}
 erp_mean <- erp_combined |> 
   filter(IntronID %in% delta_erp_filter$IntronID) |> 
   #only including introns that passed the structural filtering,
@@ -188,7 +188,7 @@ ggplot() +
 
 Figure X. Scatterplot showing intron retention events that had a mean IR ratio of greater than 0.05 in at xx cells treated with DMSO or T025 after 24 hours. Intron retention events associated with significant dIR (p-adjust < 0.001) and delta IR ratio of > 0.1 or < -0.1 are shown in blue. dIR was tested using DESeq2.
 
-```{r}
+```{r volcano plot for dIR in velde et al. 2026}
 erp_mean <- erp_combined |>
   mutate(
     delta_ir_filter = case_when(
@@ -198,7 +198,6 @@ erp_mean <- erp_combined |>
   ) |>
   group_by(IntronID, condition, delta_ir_filter) %>%
   summarise(
-    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
     mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
     .groups = "drop"
   )
@@ -206,7 +205,6 @@ erp_mean <- erp_combined |>
   # filter(IntronID %in% delta_erp_filter$IntronID) |> 
   #only including introns that passed the structural filtering,
   #and have a delta IR ratio greater than or equal to |0.1|
-  
   
 
 erp_wide <- erp_mean %>%
@@ -216,56 +214,60 @@ erp_wide <- erp_mean %>%
     values_from =  mean_ir_ratio)
 # 6106 Introns.
 
-sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(padj < 0.001, intron_id %in% delta_erp_filter$IntronID)
-#1452 intron IDs, and have a significant log2Fold Change of < 0.001 from DESeq
+# using the same criteria as Li et al. 2025 Sci Reports)
+# padj (FDR) < 0.05
+# absolute fold charge >= 2
+ sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(padj < 0.05, log2FoldChange <= -2 | log2FoldChange >= 2)
+ # 4694 observations
+
+# sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(padj < 0.001, intron_id %in% delta_erp_filter$IntronID)
+# #1452 intron IDs, and have a significant log2Fold Change of < 0.001 from DESeq
 erp_sig_wide <- erp_wide |> filter(IntronID %in% sig_dIR_erp$intron_id)
 
+
+sig_delta_and_dir <- Velde_T025_vs_DMSO |> filter(padj < 0.05, log2FoldChange <= -2 | log2FoldChange >= 2, intron_id %in% delta_erp_filter$IntronID)
+# 1375 intron IDS
+erp_sig_delta_and_dir <- erp_wide |> filter(IntronID %in% sig_delta_and_dir$intron_id)
+
 ggplot() +
-  geom_point(data = erp_wide, aes(x = T025, y = DMSO, colour = delta_ir_filter), alpha = 0.2, size = 0.75) +
-  geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "red", alpha = 0.2, size = 1)+
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-  labs(
-    x = "IR ratio - T025",
-    y = "IR ratio - DMSO",
-    colour = "",
-    title = "ERP171667"
-  ) +
-  theme_minimal()+facet_wrap(~ delta_ir_filter, labeller = label_parsed)
-
-```
-
-```{r}
-ggplot(erp_wide, aes(x = T025, y = DMSO)) +
-  geom_point(colour = "grey70", alpha = 0.6, size = 0.75) +  # background/all points
-  geom_point(
-    data = erp_sig_wide,
-    aes(colour = delta_ir_filter),
-    alpha = 0.6, size = 0.75
-  ) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "black") +
-  scale_colour_manual(
-    name = "",
-    values = c(
-      "Delta~IR~ratio<'|1|'"  = "#3B82F6",  # blue
-      "Delta~IR~ratio>='|1|'" = "#EF4444"   # red
-    ),
-    labels = c(
-      "Delta~IR~ratio<'|1|'"  = parse(text = "Delta~IR~ratio<'|1|'"),
-      "Delta~IR~ratio>='|1|'" = parse(text = "Delta~IR~ratio>='|1|'")
-    )
-  ) +
+  geom_point(data = erp_wide, aes(x = T025, y = DMSO), colour = "black", alpha = 0.2, size = 0.5) +
+  geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "pink", alpha = 0.2, size = 0.8)+
+  geom_point(data = erp_sig_delta_and_dir, aes(x = T025, y = DMSO), colour = "red", alpha = 0.2, size = 0.8)+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#701705") +
   labs(
     x = "IR ratio - T025",
     y = "IR ratio - DMSO",
     title = "ERP171667"
   ) +
-  theme_minimal() +
-  theme(
-    legend.position = c(0.15, 0.9),
-    legend.background = element_blank(),
-    plot.title = element_text(hjust = 0.5)
-  )
+  theme_minimal()
+
+ggplot() +
+  #geom_point(data = erp_wide, aes(x = T025, y = DMSO), colour = "black", alpha = 0.2, size = 0.5) +
+  geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "pink", alpha = 0.2, size = 0.8)+
+  geom_point(data = erp_sig_delta_and_dir, aes(x = T025, y = DMSO), colour = "red", alpha = 0.2, size = 0.8)+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#701705") +
+  labs(
+    x = "IR ratio - T025",
+    y = "IR ratio - DMSO",
+    title = "ERP171667"
+  ) +
+  theme_minimal()
+
+
+ggplot() +
+  geom_point(data = erp_wide, aes(x = T025, y = DMSO), colour = "black", alpha = 0.2, size = 0.5) +
+  # geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "pink", alpha = 0.2, size = 0.8)+
+  # geom_point(data = erp_sig_delta_and_dir, aes(x = T025, y = DMSO), colour = "red", alpha = 0.2, size = 0.8)+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#701705") +
+  labs(
+    x = "IR ratio - T025",
+    y = "IR ratio - DMSO",
+    title = "ERP171667"
+  ) +
+  theme_minimal()
 ```
+
+
 
 
 *note check with Ulf whether I should be filtering based on intron ID in deIR instead of the delta IR?*
@@ -336,13 +338,9 @@ ir_volcano_plot_ERP171667 <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_
   theme(panel.grid.minor = element_blank())+
   labs(title = "24 hours, T-025 1uM vs DMSO",
        x = expression(Delta ~ "IR ratio"))
-
-
-
 ```
 
 Figure X. Volcano plot of delta mean ir ratio in cells treated with T025 (n=3) and xx cells treated with DMSO (n =3) after 24 hours. Significant intron retention events are shown in red, where significance indicates the intron had a basemean > 10, the delta IR ratio was greater than 0.1, or less than -0.1, and the p-adjust (calculated in DESeq2 when calculating Log fold change) was < 0.001.
-
 
 
 ```{r eval=FALSE}
@@ -456,15 +454,15 @@ hour_labels <- c(
 )
 
 ggplot() +
-  geom_jitter(data = Zhu, aes(x = Concentration, y = sample_introns), width = 0.1) +
-  geom_point(data = mean_Zhu, aes(x = Concentration, y = mean_dir, colour = exp_design)) +
+  geom_jitter(data = Zhu, aes(x = Concentration, y = sample_introns, , colour = exp_design), width = 0.1) +
+  geom_point(data = mean_Zhu, aes(x = Concentration, y = mean_dir)) +
   geom_errorbar(
     data = mean_Zhu,
-    aes(x = Concentration, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir, colour = exp_design), 
+    aes(x = Concentration, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
     width = 0.2
   ) +
   facet_wrap(
-    ~ Hours, 
+    ~ Hours, ncol = 1, 
     labeller = labeller(Hours = hour_labels)
   ) +
   theme_bw() +
