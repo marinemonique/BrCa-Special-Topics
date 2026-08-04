@@ -18,6 +18,8 @@ library(readxl)
 source("ir_helpers.R")   # for make_ir_id()
 
 metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
+metadata_sc5903_mw <- metadata_sc5903_mw |> 
+  mutate(conc_uM = factor(conc_uM, ordered = TRUE))
 
 delta_ir_srp_iwai <- read_tsv(
   "results/ir/SRP112607_delta_ir.tsv",
@@ -188,7 +190,7 @@ ggplot() +
 
 Figure X. Scatterplot showing intron retention events that had a mean IR ratio of greater than 0.05 in at xx cells treated with DMSO or T025 after 24 hours. Intron retention events associated with significant dIR (p-adjust < 0.001) and delta IR ratio of > 0.1 or < -0.1 are shown in blue. dIR was tested using DESeq2.
 
-```{r volcano plot for dIR in velde et al. 2026}
+```{r volcano plot for dIR in velde et al. 2026, eval=FALSE}
 erp_mean <- erp_combined |>
   mutate(
     delta_ir_filter = case_when(
@@ -201,11 +203,9 @@ erp_mean <- erp_combined |>
     mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
     .groups = "drop"
   )
-
   # filter(IntronID %in% delta_erp_filter$IntronID) |> 
   #only including introns that passed the structural filtering,
   #and have a delta IR ratio greater than or equal to |0.1|
-  
 
 erp_wide <- erp_mean %>%
   pivot_wider(
@@ -267,34 +267,49 @@ ggplot() +
   theme_minimal()
 ```
 
-
-
-
 *note check with Ulf whether I should be filtering based on intron ID in deIR instead of the delta IR?*
 
 ### Intron retention events
 Aim: 
 ```{r}
 mean_Velde <- Velde |>
-  group_by(Concentration, exp_design) |>
+  group_by(conc_uM, exp_design) |>
   summarise(
     mean_dir = mean(sample_introns),
     se_dir   = sd(sample_introns) / sqrt(n()),   # sd / sqrt(n)
     .groups  = "drop"
   )
 
-ggplot() +
+ERP171667_IR_burden <- ggplot() +
   #geom_boxplot(data = Velde, aes(x = exp_design, y = n_introns)) +
-  geom_point(data = mean_Velde, aes(x = Concentration, y = mean_dir), size = 2) +
+  geom_jitter(data = Velde, aes(x = conc_uM, y = sample_introns, colour = exp_design), width = 0.2) +
+  geom_point(data = mean_Velde, aes(x = conc_uM, y = mean_dir), size = 2) +
   geom_errorbar(
     data = mean_Velde,
-    aes(x = Concentration, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), width = 0.2)+
-  geom_jitter(data = Velde, aes(x = Concentration, y = sample_introns, colour = exp_design), width = 0.1) +
+    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), width = 0.1)+
+  
   theme_bw()+
-  labs(y = "Number of intron retention events", colour = "",
-       x = "Concentration of T-025",
-       title = "ERP171667")+
-  theme(panel.grid.major.x = element_blank())
+  labs(y = "Intron retention events",
+       x = expression("T-025 Concentration (" * mu * "M)")#, title = "ERP171667"
+       )+
+  scale_y_continuous(limits = c(0, 5000))+
+  theme(panel.grid.major.x = element_blank(),
+        text = element_text(size = 11),
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        axis.title = element_text(size = 12),
+        title = element_text(size = 14),
+        legend.title = element_blank(),
+        legend.position = c(0.95, 0.99),
+legend.justification = c("right", "top")
+        )
+
+ggsave(filename = "ERP171667_IR_burden.PNG",
+       plot = ERP171667_IR_burden,
+       height = 180,
+       width = 160,
+       unit = "mm")
+
 ```
 Figure X. Number of intron retention events passing filtering criteria (structural criteria within samples, and  IR ratio > 0.05 in at least one group after intra-sample filtering). Error bars represent standard error of the mean. Coloured dot is the mean of the samples.
 
@@ -303,23 +318,25 @@ Figure X. Number of intron retention events passing filtering criteria (structur
 # merge delta IR and the dIR data
 volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
 
+
 volcano_velde <- volcano_velde |> 
   mutate(
     meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
                   delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
     significance = case_when(
-      meets_delta & padj < 0.001 ~ "red",
+      #meets_delta & padj < 0.001 ~ "red",
       meets_delta & padj < 0.01  ~ "#701705",
-      meets_delta & padj < 0.05  ~ "salmon",
+      #meets_delta & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     )
   )
 
 
 volc_data <- volcano_velde |>
-  filter(baseMean > 10) |>
+  filter(baseMean > 10) |> #ensures that only introns with enough expression are included
   as.data.frame() |>
   na.omit()
+# reduces down to 5447 introns 
 
 ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = -log10(padj), colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
@@ -335,12 +352,76 @@ ir_volcano_plot_ERP171667 <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_
   scale_colour_identity() +
   theme_bw()+
   scale_x_continuous(limits = c(-1, 1)) +
-  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())+
   labs(title = "24 hours, T-025 1uM vs DMSO",
-       x = expression(Delta ~ "IR ratio"))
+       x = expression(Delta ~ "IR ratio (T-025/DMSO)"))
+
+ir_volcano_plot_ERP171667
 ```
 
 Figure X. Volcano plot of delta mean ir ratio in cells treated with T025 (n=3) and xx cells treated with DMSO (n =3) after 24 hours. Significant intron retention events are shown in red, where significance indicates the intron had a basemean > 10, the delta IR ratio was greater than 0.1, or less than -0.1, and the p-adjust (calculated in DESeq2 when calculating Log fold change) was < 0.001.
+
+
+```{r}
+ir_volcano_plot_ERP171667 <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = -log10(padj), colour = significance)) +
+  geom_point(alpha = 0.6, size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  scale_x_continuous(limits = c(-1, 1)) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())+
+  labs(x = expression(Delta ~ "IR ratio (T-025/DMSO)"))
+
+ggarrange(ERP171667_IR_burden, ir_volcano_plot_ERP171667, labels = c("A", "B"), ncol = 2, widths = c(1, 1.5))
+```
+
+
+### Delta IR ratio vs log2Fold change
+```{r}
+delta_erp #6106 observations
+Velde_T025_vs_DMSO 
+
+
+erp_delta_ir_ratio_log2Fold <- left_join(Velde_T025_vs_DMSO, delta_erp, by = join_by(intron_id == IntronID))
+
+
+ggplot()+
+  theme_bw()+
+  geom_point(data = erp_delta_ir_ratio_log2Fold,
+             aes(x=delta_mean_ir_ratio_T025_vs_DMSO, y= log2FoldChange))+
+  labs(x = expression(Delta ~ "IR ratio (T-025/DMSO)"))+
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+
+```
+
+```{r}
+erp_delta_ir_ratio_log2Fold <- left_join(
+  Velde_T025_vs_DMSO, delta_erp,
+  by = join_by(intron_id == IntronID)
+) |>
+  mutate(
+    meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
+                  delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
+    significance = case_when(
+      meets_delta & padj < 0.01 ~ "#701705",
+      TRUE                      ~ "#a3a8ac"
+    )
+  )
+
+ggplot() +
+  theme_bw() +
+  geom_point(
+    data = erp_delta_ir_ratio_log2Fold,
+    aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = log2FoldChange, color = significance)
+  ) +
+  scale_color_identity() +
+  labs(x = expression(Delta ~ "IR ratio (T-025/DMSO)")) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+```
 
 
 ```{r eval=FALSE}
@@ -448,7 +529,7 @@ delta_ir_srp_zhu <- read_tsv(
 Aim: Number of intron retention events observed per sample.
 
 ```{r}
-mean_Zhu <- Zhu |> group_by(exp_design, Hours, Concentration) |> 
+mean_Zhu <- Zhu |> group_by(exp_design, Hours, conc_uM) |> 
   summarise(
     mean_dir = mean(sample_introns),
     se_dir   = sd(sample_introns) / sqrt(n()),   # sd / sqrt(n)
@@ -462,25 +543,65 @@ hour_labels <- c(
 )
 
 ggplot() +
-  geom_jitter(data = Zhu, aes(x = Concentration, y = sample_introns, , colour = exp_design), width = 0.1) +
-  geom_point(data = mean_Zhu, aes(x = Concentration, y = mean_dir)) +
+  geom_jitter(data = Zhu, aes(x = conc_uM, y = sample_introns, , colour = exp_design), width = 0.2) +
+  geom_point(data = mean_Zhu, aes(x = conc_uM, y = mean_dir)) +
   geom_errorbar(
     data = mean_Zhu,
-    aes(x = Concentration, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
-    width = 0.2
+    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
+    width = 0.1
   ) +
   facet_wrap(
-    ~ Hours, ncol = 1, 
+    ~ Hours, 
     labeller = labeller(Hours = hour_labels)
   ) +
   theme_bw() +
   labs(
-    y = "Number of intron retention events", 
+    y = "Intron retention events", 
     colour = "",
-    x = "Concentration [CC671]",
+    x = expression("CC-671 Concentration (" * mu * "M)"),
     title = "SRP1141379"
   ) +
-  theme(panel.grid.major.x = element_blank())
+  scale_y_continuous(limits = c(0, 5000))+
+  theme(panel.grid.major.x = element_blank(),
+        text = element_text(size = 11),
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        axis.title = element_text(size = 12),
+        title = element_text(size = 14)
+        )
+
+IR_burden_SRP1141379 <- ggplot() +
+  geom_jitter(data = Zhu, aes(x = conc_uM, y = sample_introns, , colour = exp_design), width = 0.2) +
+  geom_point(data = mean_Zhu, aes(x = conc_uM, y = mean_dir)) +
+  geom_errorbar(
+    data = mean_Zhu,
+    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
+    width = 0.1
+  ) +
+  facet_wrap(
+    ~ Hours, 
+    labeller = labeller(Hours = hour_labels)
+  ) +
+  theme_bw() +
+  labs(
+    y = "Intron retention events", 
+    colour = "",
+    x = expression("CC-671 Concentration (" * mu * "M)"),
+    title = "SRP1141379"
+  ) +
+  scale_y_continuous(limits = c(0, 5000))+
+  theme(panel.grid.major.x = element_blank(),
+        text = element_text(size = 11),
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        axis.title = element_text(size = 12),
+        title = element_text(size = 14)
+        )
+  
+ggsave(filename = "SRP1141379_IR_burden.PNG",
+         plot = IR_burden_SRP1141379,
+    units = "mm",width = 200,
+         height = 180)
 ```
 
 
@@ -899,12 +1020,15 @@ ggplot() +
 
 ggplot() +
   #geom_boxplot(data = Velde, aes(x = exp_design, y = n_introns)) +
-  geom_point(data = Iwai, aes(x = Concentration, y = sample_introns, colour = exp_design), size = 3, width = 0.1, height = 0) +
+  geom_point(data = Iwai, aes(x = conc_uM, y = sample_introns, colour = exp_design), size = 3, width = 0.1, height = 0) +
   theme_bw()+
   labs(y = "Number of intron retention events", colour = "",
-       x = "Concentration of T-025",
+       x = expression("[T-025] (" * mu * "M)"),
        title = "SRP112607")+
+  scale_y_continuous(limits = c(0, 8500))+
   theme(panel.grid.major.x = element_blank())
+
+
 
 ```
 
@@ -950,20 +1074,20 @@ sig_genes_down <- significant_velde_introns |>
 ```
 
 
-If this DESeq2 run — like most IRFinder/IR-DESeq2 pipelines — was fit on raw intron-spanning read counts (not on the IR ratio itself), then log2FoldChange reflects the change in absolute intron read counts, normalized only by DESeq2's library-size factors. That's fundamentally different from delta_mean_ir_ratio, which reflects the change in intron reads as a proportion of total reads at that intron (intron / (intron + spliced)) — i.e. normalized within the gene, controlling for how much the gene's overall expression changed.
+If this DESeq2 run - like most IRFinder/IR-DESeq2 pipelines - was fit on raw intron-spanning read counts (not on the IR ratio itself), then log2FoldChange reflects the change in absolute intron read counts, normalized only by DESeq2's library-size factors. That's fundamentally different from delta_mean_ir_ratio, which reflects the change in intron reads as a proportion of total reads at that intron (intron / (intron + spliced)) - i.e. normalized within the gene, controlling for how much the gene's overall expression changed.
 
 This produces exactly the asymmetric pattern you're seeing:
 
-If overall gene expression drops while the proportion of unspliced transcript stays the same or increases → absolute intron read counts can still fall (→ log2FoldChange < 0, "downregulated") even though the IR ratio goes up (→ increased_retention). That's your 188 mismatched genes.
-If overall gene expression is stable or rising alongside a real increase in retention → both metrics agree (→ your clean 86/88 "upregulated" agreement).
+If overall gene expression drops while the proportion of unspliced transcript stays the same or increases → absolute intron read counts can still fall (-> log2FoldChange < 0, "downregulated") even though the IR ratio goes up (-> increased_retention). That's your 188 mismatched genes.
+If overall gene expression is stable or rising alongside a real increase in retention -> both metrics agree (-> your clean 86/88 "upregulated" agreement).
 
 this means your padj significance was computed on a metric (raw intron counts) that isn't the same one you're using for direction (ratio)
 
-Delta IR going up (positive) means: the proportion of transcripts at that intron that retain it — rather than getting spliced out — has increased in the treatment condition relative to control. IR ratio itself is a ratio, not an absolute expression level: roughly speaking, IRratio ≈ intron-covering reads / (intron-covering reads + spliced-junction reads) at that locus. So a positive delta IR does mean the intron-retained isoform's relative share went up — yes, in that specific sense, you can say the retained-intron isoform is "increased" (more of the total transcript pool at that intron now carries the retained intron).
+Delta IR going up (positive) means: the proportion of transcripts at that intron that retain it - rather than getting spliced out - has increased in the treatment condition relative to control. IR ratio itself is a ratio, not an absolute expression level: roughly speaking, IRratio approximately equal to intron-covering reads / (intron-covering reads + spliced-junction reads) at that locus. So a positive delta IR does mean the intron-retained isoform's relative share went up - yes, in that specific sense, you can say the retained-intron isoform is "increased" (more of the total transcript pool at that intron now carries the retained intron).
 
 
 
-```{r gene ontology of dIR}
+```{r gene ontology of dIR, eval=FALSE}
 library(clusterProfiler)
 library(org.Hs.eg.db)
 
@@ -1000,7 +1124,7 @@ ego_up <- enrichGO(
   keyType       = "ENSEMBL",
   ont           = "BP",
   pAdjustMethod = "BH",
-  pvalueCutoff  = 0.05,
+  pvalueCutoff  = 1,
   qvalueCutoff = 1
   #readable      = TRUE
 )
@@ -1012,7 +1136,7 @@ ego_down <- enrichGO(
   keyType       = "ENSEMBL",
   ont           = "BP",
   pAdjustMethod = "BH",
-  pvalueCutoff  = 0.05,
+  pvalueCutoff  = 1,
   qvalueCutoff  = 1
   #readable      = TRUE
 )
@@ -1031,7 +1155,9 @@ dotplot(ego_down, showCategory = 20, title = "Decreased intron retention")
 
 
 ## 7.2. Zhu et al. 2018
+
 ### CC671 3uM @ 6 hours
+
 ```{r}
 volcano_zhu_6hr_3uM <- left_join(
   dIR_6hrs_CC671_3uM_vs_DMSO,
@@ -1075,8 +1201,6 @@ sig_genes_up <- significant_zhu_6hr_3um |>
 sig_genes_down <- significant_zhu_6hr_3um |> 
   filter(direction_deltaIR == "decreased_retention") |> 
   pull(EnsemblID) |> unique()
-
-
 
 # GO
 ego_up <- enrichGO(
@@ -1148,8 +1272,6 @@ whatever sample subset that model uses.
 dEG_T025_vs_DMSO <- read_csv("results/genes/ERP171667/T025_vs_DMSO.csv") 
 dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> mutate("EnsemblID" = ...1)
 
-
-
 dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
@@ -1168,7 +1290,9 @@ ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significanc
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (T025/DMSO)")
+  labs(x = "log2FoldChange (T025/DMSO)",
+       title = "ERP171667")+
+  theme(panel.grid.minor = element_blank())
 ```
 
 ### Upregulated?
@@ -1195,14 +1319,25 @@ dEG_ERP171667_upreg_filter <- dEG_T025_vs_DMSO |>
          padj <= 0.05) |> 
   pull(EnsemblID)
 
+volcano_velde <- volcano_velde |> 
+  mutate(
+    meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
+                  delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
+    significance = case_when(
+      meets_delta & padj < 0.001 ~ "red",
+      meets_delta & padj < 0.01  ~ "#701705",
+      meets_delta & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "#a3a8ac"
+    )
+  )
+
 volcano_velde |> filter(significance != "#a3a8ac") |>
   #1988 introns
-  filter(EnsemblID.x %in% dEG_ERP171667_upreg_filter) |> # 64 genes that have upregulated introns have the genes differentially expressed
-  pull(EnsemblID.x)
+  filter(EnsemblID.x %in% dEG_ERP171667_upreg_filter) # 64 genes that have upregulated introns have the genes differentially expressed
 
 ERP171667_upreg_genes_and_increased_ir <- volcano_velde |> filter(significance != "#a3a8ac") |>
   #1988 introns
-  filter(EnsemblID.x %in% dEG_ERP171667_upreg_filter)
+  filter(EnsemblID.x %in% dEG_ERP171667_upreg_filter) 
 ```
 
 ### Intron retention events that are significant but the expression of the gene is not upregulated (dEG) (where upregulated is defined as a log2FoldChange of >= 3)
@@ -1210,12 +1345,10 @@ ERP171667_upreg_genes_and_increased_ir <- volcano_velde |> filter(significance !
 volcano_velde |> filter(significance != "#a3a8ac") |>
   #1988 introns
   filter(!EnsemblID.x %in% dEG_ERP171667_upreg_filter) #1924 introns 
-
 ```
 
 
 ## 8.2. Zhu et al. 2018
-
 
 ### CC671 3uM @ 6 hours
 ```{r}
@@ -1243,6 +1376,14 @@ ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significanc
   theme_bw()+
   labs(x = "log2FoldChange (CC671 3uM/DMSO)",
        title = "6 hours")
+
+volcano_zhu_6hr_3uM_gene <-ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = "log2FoldChange (CC671 3uM/DMSO)",
+       title = "6 hours") +
+  theme(panel.grid.minor = element_blank())
 ```
 
 #### Upregulated genes
@@ -1265,7 +1406,8 @@ SRP141379_3uM_6hr_upreg_filter <- dEG_6hr_CC671_3uM_vs_DMSO |>
 SRP141379_3uM_6hr_upreg_genes_and_increased_ir <-  volcano_zhu_6hr_3uM |>
   filter(baseMean > 10) |> filter(significance != "#a3a8ac") |>
   #1079 introns
-  filter(Ensembl %in% SRP141379_3uM_6hr_upreg_filter)
+  filter(EnsemblID %in% SRP141379_3uM_6hr_upreg_filter) 
+# 19 introns with significant delta IR, and log2Fold change were derived from genes that had upregulated gene expression in treated cells
 ```
 
 
@@ -1274,24 +1416,131 @@ SRP141379_3uM_6hr_upreg_genes_and_increased_ir <-  volcano_zhu_6hr_3uM |>
 ```{r}
 dEG_6hr_CC671_10uM_vs_DMSO <- read_csv("results/genes/SRP141379/6hr/CC671_10uM_vs_DMSO.csv")
 dEG_6hr_CC671_10uM_vs_DMSO <- dEG_6hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID" = ...1)
+
+dEG_6hr_CC671_10uM_vs_DMSO <- dEG_6hr_CC671_10uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
+  mutate(
+    significance = case_when(
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "#a3a8ac"
+    ))
+
+volc_data <- dEG_6hr_CC671_10uM_vs_DMSO |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
+  na.omit()
+
+ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = "log2FoldChange (CC671 10uM/DMSO)",
+       title = "6 hours")
+
+volcano_zhu_6hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = "log2FoldChange (CC671 10uM/DMSO)",
+       title = "6 hours")+
+  theme(panel.grid.minor = element_blank())
 ```
 
+#### Upregulated genes
+```{r}
+dEG_6hr_CC671_10uM_vs_DMSO |> 
+  filter(log2FoldChange >= 3,
+         padj <= 0.05)
+
+#475 genes of 18114 are have increased expression in cells treated with CC671 compared to DMSO
+```
 
 ### CC671 3uM @ 24 hours
 ```{r}
 dEG_24hr_CC671_3uM_vs_DMSO <- read_csv("results/genes/SRP141379/24hr/CC671_3uM_vs_DMSO.csv")
-
 dEG_24hr_CC671_3uM_vs_DMSO <- dEG_24hr_CC671_3uM_vs_DMSO |> mutate("EnsemblID" = ...1)
+
+# Volcano Plot
+dEG_24hr_CC671_3uM_vs_DMSO <- dEG_24hr_CC671_3uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
+  mutate(
+    significance = case_when(
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "#a3a8ac"
+    ))
+
+volc_data <- dEG_24hr_CC671_3uM_vs_DMSO |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
+  na.omit()
+
+ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = "log2FoldChange (CC671 3uM/DMSO)",
+       title = "24 hours")
+
+volcano_zhu_24hr_3uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = "log2FoldChange (CC671 3uM/DMSO)",
+       title = "24 hours")+
+  theme(panel.grid.minor = element_blank())
 ```
 
+#### Upregulated genes
+```{r}
+dEG_24hr_CC671_3uM_vs_DMSO |> 
+  filter(log2FoldChange >= 3,
+         padj <= 0.05)
+
+#88 genes of 17923 are have increased expression in cells treated with CC671 compared to DMSO
+```
 
 ### CC671 10uM @ 24 hours
+
 ```{r}
 dEG_24hr_CC671_10uM_vs_DMSO <- read_csv("results/genes/SRP141379/24hr/CC671_10uM_vs_DMSO.csv")
 dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID" = ...1)
 
+
+dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
+  mutate(
+    significance = case_when(
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "#a3a8ac"
+    ))
+
+volc_data <- dEG_24hr_CC671_10uM_vs_DMSO |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
+  na.omit()
+
+ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = "log2FoldChange (CC671 10uM/DMSO)",
+       title = "24 hours")
+
+volcano_zhu_24hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = "log2FoldChange (CC671 10uM/DMSO)",
+       title = "24 hours")+
+  theme(panel.grid.minor = element_blank())
 ```
 
+```{r}
+ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_6hr_10uM_gene, volcano_zhu_24hr_3uM_gene, volcano_zhu_24hr_10uM_gene, ncol =2, nrow = 2)
+```
 
 
 # 9. Gene ontology of dEGs
@@ -1308,3 +1557,63 @@ dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID"
 ### CC671 10uM @ 24 hours
 
 ## 9.3. Iwai et al. 2018
+
+
+# 10. Cross study comparisons
+## 10.1. Are intron events consistent between T-025 and CC-671 after 24 hours?
+
+```{r}
+# name each Zhu dataset with its delta column, so the loop knows which column to use
+zhu_datasets <- list(
+  "6hr_3uM"   = list(df = volcano_zhu_6hr_3uM,   delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  "6hr_10uM"  = list(df = volcano_zhu_6hr_10uM,  delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
+  "24hr_3uM"  = list(df = volcano_zhu_24hr_3uM,  delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  "24hr_10uM" = list(df = volcano_zhu_24hr_10uM, delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO")
+)
+
+
+filter_hits <- function(df, delta_col, delta_thresh = 0.1) {
+  df |>
+    filter(
+      .data[[delta_col]] >= delta_thresh,   # only increases in IR ratio
+      significance != "#a3a8ac",
+      baseMean > 10
+    ) |>
+    pull(intron_id)
+}
+
+# ERP171667 hits (baseline, computed once)
+velde_hits <- filter_hits(volcano_velde, "delta_mean_ir_ratio_T025_vs_DMSO")
+
+# Loop over the four Zhu comparisons
+comparison_results <- map_dfr(names(zhu_datasets), function(nm) {
+  entry    <- zhu_datasets[[nm]]
+  zhu_hits <- filter_hits(entry$df, entry$delta_col)
+  shared   <- intersect(velde_hits, zhu_hits)
+
+  tibble(
+    comparison   = nm,
+    n_velde_hits = length(velde_hits),
+    n_zhu_hits   = length(zhu_hits),
+    n_shared     = length(shared),
+    shared_ids   = list(shared)   # list-column so you can inspect IDs later
+  )
+})
+
+comparison_results
+```
+
+```{r}
+library(UpSetR)
+
+all_hits <- list(
+  Velde     = velde_hits,
+  `6hr_3uM`   = filter_hits(volcano_zhu_6hr_3uM,   "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  `6hr_10uM`  = filter_hits(volcano_zhu_6hr_10uM,  "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
+  `24hr_3uM`  = filter_hits(volcano_zhu_24hr_3uM,  "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  `24hr_10uM` = filter_hits(volcano_zhu_24hr_10uM, "delta_mean_ir_ratio_CC671_10uM_vs_DMSO")
+)
+
+upset(fromList(all_hits), order.by = "freq")
+```
+
