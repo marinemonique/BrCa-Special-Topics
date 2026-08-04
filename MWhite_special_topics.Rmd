@@ -388,22 +388,30 @@ CC671_3uM_vs_DMSO_6hr <- CC671_3uM_vs_DMSO_6hr|>
   mutate(
     "Hours" = 6,
     "Concentration" = "3uM",
-    "Study" = "Zhu")
+    "Study" = "Zhu",
+    EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
+         intron_id = `...1`)
 
 CC671_3uM_vs_DMSO_24hr <- CC671_3uM_vs_DMSO_24hr |> mutate(
     "Hours" = 24,
     "Concentration" = "3uM",
-    "Study" = "Zhu")
+    "Study" = "Zhu",
+    EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
+         intron_id = `...1`)
 
 CC671_10uM_vs_DMSO_6hr <- CC671_10uM_vs_DMSO_6hr |> mutate(
     "Hours" = 6,
     "Concentration" = "10uM",
-    "Study" = "Zhu")
+    "Study" = "Zhu", 
+    EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
+         intron_id = `...1`)
 
 CC671_10uM_vs_DMSO_24hr <- CC671_10uM_vs_DMSO_24hr|> mutate(
     "Hours" = 24,
     "Concentration" = "10uM",
-    "Study" = "Zhu")
+    "Study" = "Zhu",
+    EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
+         intron_id = `...1`)
 
 # Filtering of delta IR
 srp_combined <- read_tsv(
@@ -992,7 +1000,7 @@ ego_up <- enrichGO(
   keyType       = "ENSEMBL",
   ont           = "BP",
   pAdjustMethod = "BH",
-  pvalueCutoff  = 1,
+  pvalueCutoff  = 0.05,
   qvalueCutoff = 1
   #readable      = TRUE
 )
@@ -1004,7 +1012,7 @@ ego_down <- enrichGO(
   keyType       = "ENSEMBL",
   ont           = "BP",
   pAdjustMethod = "BH",
-  pvalueCutoff  = 1,
+  pvalueCutoff  = 0.05,
   qvalueCutoff  = 1
   #readable      = TRUE
 )
@@ -1142,13 +1150,13 @@ dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> mutate("EnsemblID" = ...1)
 
 
 
-dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> 
+dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
       log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "pink",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
       log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
-      TRUE                       ~ "black"
+      TRUE                       ~ "#a3a8ac"
     ))
 
 volc_data <- dEG_T025_vs_DMSO |>
@@ -1157,21 +1165,53 @@ volc_data <- dEG_T025_vs_DMSO |>
   na.omit()
 
 ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
-  geom_point() +
+  geom_point(size = 0.6) +
   scale_colour_identity() +
-  theme_bw()
+  theme_bw()+
+  labs(x = "log2FoldChange (T025/DMSO)")
 ```
 
-How many are upregulated?
+### Upregulated?
+
+```{r}
+dEG_T025_vs_DMSO |> 
+  filter(log2FoldChange >= 3,
+         padj <= 0.05)
+
+#2151 genes of 17 724 are have increased expression in T025 compared to DMSO
+```
+
+2151 genes of 17 724 are have increased expression in T025 compared to DMSO
 
 
-How many are downregulated
+### Downregulated
+
+### Upregualted genes the same genes with increased IR?
 
 Are the genes upregulated in expression the same genes from which the isoforms have increasing IR ratio
 ```{r}
+dEG_ERP171667_upreg_filter <- dEG_T025_vs_DMSO |> 
+  filter(log2FoldChange >= 3,
+         padj <= 0.05) |> 
+  pull(EnsemblID)
 
+volcano_velde |> filter(significance != "#a3a8ac") |>
+  #1988 introns
+  filter(EnsemblID.x %in% dEG_ERP171667_upreg_filter) |> # 64 genes that have upregulated introns have the genes differentially expressed
+  pull(EnsemblID.x)
+
+ERP171667_upreg_genes_and_increased_ir <- volcano_velde |> filter(significance != "#a3a8ac") |>
+  #1988 introns
+  filter(EnsemblID.x %in% dEG_ERP171667_upreg_filter)
 ```
 
+### Intron retention events that are significant but the expression of the gene is not upregulated (dEG) (where upregulated is defined as a log2FoldChange of >= 3)
+```{r}
+volcano_velde |> filter(significance != "#a3a8ac") |>
+  #1988 introns
+  filter(!EnsemblID.x %in% dEG_ERP171667_upreg_filter) #1924 introns 
+
+```
 
 
 ## 8.2. Zhu et al. 2018
@@ -1180,24 +1220,76 @@ Are the genes upregulated in expression the same genes from which the isoforms h
 ### CC671 3uM @ 6 hours
 ```{r}
 dEG_6hr_CC671_3uM_vs_DMSO <- read_csv("results/genes/SRP141379/6hr/CC671_3uM_vs_DMSO.csv")
+
+dEG_6hr_CC671_3uM_vs_DMSO <- dEG_6hr_CC671_3uM_vs_DMSO |> mutate("EnsemblID" = ...1)
+
+dEG_6hr_CC671_3uM_vs_DMSO <- dEG_6hr_CC671_3uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
+  mutate(
+    significance = case_when(
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "#a3a8ac"
+    ))
+
+volc_data <- dEG_6hr_CC671_3uM_vs_DMSO |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
+  na.omit()
+
+ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = "log2FoldChange (CC671 3uM/DMSO)",
+       title = "6 hours")
 ```
+
+#### Upregulated genes
+```{r}
+dEG_6hr_CC671_3uM_vs_DMSO |> 
+  filter(log2FoldChange >= 3,
+         padj <= 0.05)
+
+#351 genes of 18114 are have increased expression in cells treated with CC671 compared to DMSO
+```
+
+#### Increased gene expression == increased intron retention?
+```{r}
+SRP141379_3uM_6hr_upreg_filter <- dEG_6hr_CC671_3uM_vs_DMSO |> 
+  filter(log2FoldChange >= 3,
+         padj <= 0.05)|> 
+  pull(EnsemblID)
+# 351 introns
+
+SRP141379_3uM_6hr_upreg_genes_and_increased_ir <-  volcano_zhu_6hr_3uM |>
+  filter(baseMean > 10) |> filter(significance != "#a3a8ac") |>
+  #1079 introns
+  filter(Ensembl %in% SRP141379_3uM_6hr_upreg_filter)
+```
+
 
 
 ### CC671 10uM @ 6 hours
 ```{r}
 dEG_6hr_CC671_10uM_vs_DMSO <- read_csv("results/genes/SRP141379/6hr/CC671_10uM_vs_DMSO.csv")
+dEG_6hr_CC671_10uM_vs_DMSO <- dEG_6hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID" = ...1)
 ```
 
 
 ### CC671 3uM @ 24 hours
 ```{r}
 dEG_24hr_CC671_3uM_vs_DMSO <- read_csv("results/genes/SRP141379/24hr/CC671_3uM_vs_DMSO.csv")
+
+dEG_24hr_CC671_3uM_vs_DMSO <- dEG_24hr_CC671_3uM_vs_DMSO |> mutate("EnsemblID" = ...1)
 ```
 
 
 ### CC671 10uM @ 24 hours
 ```{r}
 dEG_24hr_CC671_10uM_vs_DMSO <- read_csv("results/genes/SRP141379/24hr/CC671_10uM_vs_DMSO.csv")
+dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID" = ...1)
+
 ```
 
 
