@@ -1340,9 +1340,9 @@ dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> mutate("EnsemblID" = ...1)
 dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
       log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     ))
 
@@ -1389,9 +1389,9 @@ volcano_velde <- volcano_velde |>
     meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
                   delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
     significance = case_when(
-      meets_delta & padj < 0.001 ~ "red",
+      #meets_delta & padj < 0.001 ~ "red",
       meets_delta & padj < 0.01  ~ "#701705",
-      meets_delta & padj < 0.05  ~ "salmon",
+      #meets_delta & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     )
   )
@@ -1424,9 +1424,9 @@ dEG_6hr_CC671_3uM_vs_DMSO <- dEG_6hr_CC671_3uM_vs_DMSO |> mutate("EnsemblID" = .
 dEG_6hr_CC671_3uM_vs_DMSO <- dEG_6hr_CC671_3uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
       log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     ))
 
@@ -1446,7 +1446,8 @@ volcano_zhu_6hr_3uM_gene <-ggplot(volc_data, aes(x = log2FoldChange, y = -log10(
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (CC671 3uM/DMSO)",
+  labs(
+    x = expression("log2FoldChange (CC671 3" * mu * "M/DMSO)"),
        title = "6 hours") +
   theme(panel.grid.minor = element_blank())
 ```
@@ -1500,14 +1501,16 @@ ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significanc
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (CC671 10uM/DMSO)",
+  labs(
+     x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)"),
        title = "6 hours")
 
 volcano_zhu_6hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (CC671 10uM/DMSO)",
+  labs(
+     x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)"),
        title = "6 hours")+
   theme(panel.grid.minor = element_blank())
 ```
@@ -1530,9 +1533,9 @@ dEG_24hr_CC671_3uM_vs_DMSO <- dEG_24hr_CC671_3uM_vs_DMSO |> mutate("EnsemblID" =
 dEG_24hr_CC671_3uM_vs_DMSO <- dEG_24hr_CC671_3uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
       log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     ))
 
@@ -1545,14 +1548,15 @@ ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significanc
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (CC671 3uM/DMSO)",
+  labs(
+     x = expression("log2FoldChange (CC671 3" * mu * "M/DMSO)"),
        title = "24 hours")
 
 volcano_zhu_24hr_3uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (CC671 3uM/DMSO)",
+  labs(x = expression("log2FoldChange (CC671 3" * mu * "M/DMSO)"),
        title = "24 hours")+
   theme(panel.grid.minor = element_blank())
 ```
@@ -1576,9 +1580,9 @@ dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID"
 dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
       log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     ))
 
@@ -1591,14 +1595,14 @@ ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significanc
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (CC671 10uM/DMSO)",
+  labs( x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)"),
        title = "24 hours")
 
 volcano_zhu_24hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (CC671 10uM/DMSO)",
+  labs( x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)"),
        title = "24 hours")+
   theme(panel.grid.minor = element_blank())
 ```
