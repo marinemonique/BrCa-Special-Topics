@@ -161,7 +161,7 @@ erp_mean <- erp_combined |>
   #and have a delta IR ratio greater than or equal to |0.1|
   group_by(IntronID, condition) %>%
   summarise(
-    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    #mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
     mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
     .groups = "drop")
 
@@ -193,7 +193,7 @@ ggplot() +
 
 Figure X. Scatterplot showing intron retention events that had a mean IR ratio of greater than 0.05 in at xx cells treated with DMSO or T025 after 24 hours. Intron retention events associated with significant dIR (p-adjust < 0.001) and delta IR ratio of > 0.1 or < -0.1 are shown in blue. dIR was tested using DESeq2.
 
-1618 
+1618 introns that have a base expression of 10, FDR < 0.01, and a delta IR ratio greater than or equal to |0.1|.
 
 ```{r volcano plot for dIR in velde et al. 2026, eval=FALSE}
 erp_mean <- erp_combined |>
@@ -334,7 +334,10 @@ volcano_velde <- volcano_velde |>
       #meets_delta & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     )
-  )
+  ) |> 
+  filter(baseMean > 10)
+
+volcano_velde |> group_by(significance) |> summarise(n_introns = n())
 
 
 volc_data <- volcano_velde |>
@@ -1346,6 +1349,8 @@ dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> #indicates enou
       TRUE                       ~ "#a3a8ac"
     ))
 
+dEG_T025_vs_DMSO |> group_by(significance) |> summarise(n_genes = n())
+
 volc_data <- dEG_T025_vs_DMSO |>
   filter(baseMean > 10) |>
   as.data.frame() |>
@@ -1355,8 +1360,9 @@ ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significanc
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs(x = "log2FoldChange (T025/DMSO)",
-       title = "ERP171667")+
+  labs(x = expression("log2FoldChange (T-025 1" * mu * "M/DMSO)")
+       #, title = "ERP171667"
+       )+
   theme(panel.grid.minor = element_blank())
 ```
 
@@ -1365,7 +1371,7 @@ ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significanc
 ```{r}
 dEG_T025_vs_DMSO |> 
   filter(log2FoldChange >= 3,
-         padj <= 0.05)
+         padj < 0.01)
 
 #2151 genes of 17 724 are have increased expression in T025 compared to DMSO
 ```
