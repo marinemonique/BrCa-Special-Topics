@@ -172,8 +172,11 @@ erp_wide <- erp_mean %>%
     values_from =  mean_ir_ratio)
 # 2559 Introns.
 
-sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(padj < 0.001, intron_id %in% delta_erp_filter$IntronID)
+sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(baseMean > 10,
+  padj < 0.01, 
+  intron_id %in% delta_erp_filter$IntronID)
 #1452 intron IDs, and have a significant log2Fold Change of < 0.001 from DESeq
+#1618 dIR have a base expression of 10, FDR < 0.01, and a delta IR ratio greater than or equal to |0.1|
 erp_sig_wide <- erp_wide |> filter(IntronID %in% sig_dIR_erp$intron_id)
 
 ggplot() +
@@ -189,6 +192,8 @@ ggplot() +
 ```
 
 Figure X. Scatterplot showing intron retention events that had a mean IR ratio of greater than 0.05 in at xx cells treated with DMSO or T025 after 24 hours. Intron retention events associated with significant dIR (p-adjust < 0.001) and delta IR ratio of > 0.1 or < -0.1 are shown in blue. dIR was tested using DESeq2.
+
+1618 
 
 ```{r volcano plot for dIR in velde et al. 2026, eval=FALSE}
 erp_mean <- erp_combined |>
@@ -371,9 +376,42 @@ ir_volcano_plot_ERP171667 <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_
   scale_x_continuous(limits = c(-1, 1)) +
   theme(panel.grid.minor = element_blank(),
         panel.grid.major = element_blank())+
-  labs(x = expression(Delta ~ "IR ratio (T-025/DMSO)"))
+  labs(x = expression(Delta ~ "IR ratio (T-025 1" * mu * "M/DMSO)"))
 
-ggarrange(ERP171667_IR_burden, ir_volcano_plot_ERP171667, labels = c("A", "B"), ncol = 2, widths = c(1, 1.5))
+erp_delta_ir_ratio_log2Fold <- left_join(
+  Velde_T025_vs_DMSO, delta_erp,
+  by = join_by(intron_id == IntronID)
+) |>
+  mutate(
+    meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
+                  delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
+    significance = case_when(
+      meets_delta & padj < 0.01 ~ "#701705",
+      TRUE                      ~ "#a3a8ac"
+    )
+  )
+
+ir_l2fc_plot_ERP171667 <- ggplot() +
+  theme_bw() +
+  geom_point(
+    data = erp_delta_ir_ratio_log2Fold,
+    aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = log2FoldChange, color = significance),
+    size = 0.6
+  ) +
+  scale_color_identity() +
+  labs(x = expression(Delta ~ "IR ratio (T-025 1" * mu * "M/DMSO)")) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+ERP171667_volc_l2fc <- ggarrange(ir_volcano_plot_ERP171667, ir_l2fc_plot_ERP171667, labels = c("B", "C"), ncol = 1)
+
+ERP_ir_plot <- ggarrange(ERP171667_IR_burden, ERP171667_volc_l2fc, labels = c("A", ""), ncol = 2, widths = c(1, 0.8))
+
+ggsave(filename = "ERP171667_ir_plot.PNG",
+       plot = ERP_ir_plot,
+       width = 180,
+       height = 160,
+       unit = "mm")
 ```
 
 
@@ -396,34 +434,6 @@ ggplot()+
 
 
 ```
-
-```{r}
-erp_delta_ir_ratio_log2Fold <- left_join(
-  Velde_T025_vs_DMSO, delta_erp,
-  by = join_by(intron_id == IntronID)
-) |>
-  mutate(
-    meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
-                  delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
-    significance = case_when(
-      meets_delta & padj < 0.01 ~ "#701705",
-      TRUE                      ~ "#a3a8ac"
-    )
-  )
-
-ggplot() +
-  theme_bw() +
-  geom_point(
-    data = erp_delta_ir_ratio_log2Fold,
-    aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = log2FoldChange, color = significance),
-    size = 0.6
-  ) +
-  scale_color_identity() +
-  labs(x = expression(Delta ~ "IR ratio (T-025/DMSO)")) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_blank())
-```
-
 
 
 Figure X. Volcano plot of log2FoldChange of intron expression in xx cells treated with T025 (n=3) and treated with DMSO (n =3) after 24 hours. Significant intron retention events are shown in red, where significance indicates the intron had a basemean > 10, the delta IR ratio was greater than 0.1, or less than -0.1, and the p-adjust (calculated in DESeq2 when calculating Log fold change) was < 0.001.
@@ -815,6 +825,19 @@ ir_volcano_plot_SRP141379_3uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_rat
 
 ```
 
+```{r}
+ir_l2fc_plot_SRP141379_3uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = log2FoldChange, colour = significance)) +
+  geom_point(alpha = 0.6, size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  scale_x_continuous(limits = c(-1, 1)) +
+  theme(panel.grid.minor = element_blank())+
+  labs(title = "6 hours",
+       x = expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)")) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+```
+
 
 #### CC671 10uM @ 6 hours
 ```{r}
@@ -862,6 +885,19 @@ ir_volcano_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ra
   labs(
     #title = "6 hours",
        x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)"))
+
+# IR ratio and log2 fold change
+ir_l2fc_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = log2FoldChange, colour = significance)) +
+  geom_point(alpha = 0.6, size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  scale_x_continuous(limits = c(-1, 1)) +
+  theme(panel.grid.minor = element_blank())+
+  labs(
+    #title = "6 hours",
+       x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)")) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
 ```
 
 
@@ -912,6 +948,18 @@ ir_volcano_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ra
   theme(panel.grid.minor = element_blank())+
   labs(title = "24 hours",
        x= expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)"))
+
+# Delta IR a d log2Fold
+ir_l2fc_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = log2FoldChange, colour = significance)) +
+  geom_point(alpha = 0.6, size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  scale_x_continuous(limits = c(-1, 1)) +
+  theme(panel.grid.minor = element_blank())+
+  labs(title = "24 hours",
+       x = expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)")) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
 
 ```
 
@@ -966,6 +1014,19 @@ ir_volcano_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_r
   labs(
     #title = "24 hours",
        x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)"))
+
+# Delta IR ratio and log2fold change
+ir_l2fc_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = log2FoldChange, colour = significance)) +
+  geom_point(alpha = 0.6, size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  scale_x_continuous(limits = c(-1, 1)) +
+  theme(panel.grid.minor = element_blank())+
+  labs(
+    #title = "24 hours",
+       x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)")) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
 ```
 
 9332 introns
@@ -986,11 +1047,13 @@ ggsave(ir_volcano_plot_full_SRP141379,
 ```{r}
 ir_volcano_plot_full_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_6hr, ir_volcano_plot_SRP141379_3uM_24hr, ir_volcano_plot_SRP141379_10uM_6hr, ir_volcano_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("B", "C", "", ""))
 
-SRP141379_ir_burden_volcano <- ggarrange(IR_burden_SRP1141379, ir_volcano_plot_full_SRP141379, ncol = 1, heights = c(1, 1.75), labels = c("A", ""))
+ir_l2fc_plot_full_SRP141379 <- ggpubr::ggarrange(ir_l2fc_plot_SRP141379_3uM_6hr, ir_l2fc_plot_SRP141379_3uM_24hr, ir_l2fc_plot_SRP141379_10uM_6hr, ir_l2fc_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("D", "E", "", ""))
+
+SRP141379_ir_burden_volcano <- ggarrange(IR_burden_SRP1141379, ir_volcano_plot_full_SRP141379, ir_l2fc_plot_full_SRP141379, ncol = 1, heights = c(1, 1.2, 1.2), labels = c("A", "", ""))
 
 ggsave(SRP141379_ir_burden_volcano,
        filename = "SRP141379_ir_burden_volcano.png",
-       height = 200,
+       height = 280,
        width = 180,
        units = "mm")
 ```
@@ -1563,6 +1626,27 @@ ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_6hr_10uM_gene, volcano_zhu_24hr_
 
 # 10. Cross study comparisons
 ## 10.1. Are intron events consistent between T-025 and CC-671 after 24 hours?
+```{r}
+volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
+volcano_velde <- volcano_velde |> 
+  mutate(
+    meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
+                  delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
+    significance = case_when(
+      #meets_delta & padj < 0.001 ~ "red",
+      meets_delta & padj < 0.01  ~ "#701705",
+      #meets_delta & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "#a3a8ac"
+    )
+  )
+
+sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(baseMean > 10,
+  padj < 0.01, 
+  intron_id %in% delta_erp_filter$IntronID)
+
+#1618 dIR have a base expression of 10, FDR < 0.01, and a delta IR ratio greater than or equal to |0.1|
+```
+
 
 ```{r}
 # name each Zhu dataset with its delta column, so the loop knows which column to use
@@ -1585,6 +1669,7 @@ filter_hits <- function(df, delta_col, delta_thresh = 0.1) {
 }
 
 # ERP171667 hits (baseline, computed once)
+
 velde_hits <- filter_hits(volcano_velde, "delta_mean_ir_ratio_T025_vs_DMSO")
 
 # Loop over the four Zhu comparisons
@@ -1617,5 +1702,180 @@ all_hits <- list(
 )
 
 upset(fromList(all_hits), order.by = "freq")
+```
+
+```{r}
+library(dplyr)
+library(purrr)
+library(tibble)
+
+zhu_datasets <- list(
+  "6hr_3uM"   = list(df = volcano_zhu_6hr_3uM,   delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  "6hr_10uM"  = list(df = volcano_zhu_6hr_10uM,  delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
+  "24hr_3uM"  = list(df = volcano_zhu_24hr_3uM,  delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  "24hr_10uM" = list(df = volcano_zhu_24hr_10uM, delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO")
+)
+
+# direction = "up", "down", or "both" (both = union of up & down, not requiring same sign in comparison)
+filter_hits <- function(df, delta_col, direction = "both", delta_thresh = 0.1) {
+  d <- .data <- NULL  # avoid lint noise
+  vals <- df[[delta_col]]
+
+  keep <- switch(direction,
+    up   = vals >= delta_thresh,
+    down = vals <= -delta_thresh,
+    both = vals >= delta_thresh | vals <= -delta_thresh
+  )
+
+  df |>
+    filter(keep,
+           significance != "#a3a8ac",
+           baseMean > 10) |>
+    pull(intron_id)
+}
+
+# Velde hits, split by direction
+velde_up   <- filter_hits(volcano_velde, "delta_mean_ir_ratio_T025_vs_DMSO", "up")
+velde_down <- filter_hits(volcano_velde, "delta_mean_ir_ratio_T025_vs_DMSO", "down")
+
+comparison_results <- map_dfr(names(zhu_datasets), function(nm) {
+  entry <- zhu_datasets[[nm]]
+
+  zhu_up   <- filter_hits(entry$df, entry$delta_col, "up")
+  zhu_down <- filter_hits(entry$df, entry$delta_col, "down")
+
+  shared_up      <- intersect(velde_up, zhu_up)          # both increase
+  shared_down    <- intersect(velde_down, zhu_down)      # both decrease
+  shared_opposite_ud <- intersect(velde_up, zhu_down)     # Velde up, Zhu down
+  shared_opposite_du <- intersect(velde_down, zhu_up)     # Velde down, Zhu up
+
+  tibble(
+    comparison        = nm,
+    n_velde_up        = length(velde_up),
+    n_velde_down      = length(velde_down),
+    n_zhu_up          = length(zhu_up),
+    n_zhu_down        = length(zhu_down),
+    n_shared_up       = length(shared_up),
+    n_shared_down     = length(shared_down),
+    n_shared_opposite = length(shared_opposite_ud) + length(shared_opposite_du),
+    n_shared_same_dir = length(shared_up) + length(shared_down),
+    shared_up_ids      = list(shared_up),
+    shared_down_ids     = list(shared_down)
+  )
+})
+
+comparison_results |>
+  dplyr::select(comparison, n_velde_up, n_velde_down, n_zhu_up, n_zhu_down,
+         n_shared_up, n_shared_down, n_shared_same_dir, n_shared_opposite)
+```
+
+```{r}
+up_only <- list(
+  `T-025 24hr 1uM` = velde_up,
+  `CC-671 6hr 3uM`    = filter_hits(volcano_zhu_6hr_3uM,   "delta_mean_ir_ratio_CC671_3uM_vs_DMSO",  "up"),
+  `CC-671 6hr 10uM`   = filter_hits(volcano_zhu_6hr_10uM,  "delta_mean_ir_ratio_CC671_10uM_vs_DMSO", "up"),
+  `CC-671 24hr 3uM`   = filter_hits(volcano_zhu_24hr_3uM,  "delta_mean_ir_ratio_CC671_3uM_vs_DMSO",  "up"),
+  `CC-671 24hr 10uM`  = filter_hits(volcano_zhu_24hr_10uM, "delta_mean_ir_ratio_CC671_10uM_vs_DMSO", "up")
+)
+
+upset(fromList(up_only), order.by = "freq", nsets = 5)
+```
+
+22 introns were shared in all 5 samples.
+
+```{r}
+shared_all <- Reduce(intersect, up_only)
+length(shared_all)   # should be 22
+shared_all           # the intron IDs themselves
+
+shared_all_annotated <- purrr::reduce(
+  list(
+    volcano_velde |>
+      filter(intron_id %in% shared_all) |>
+      dplyr::select(intron_id,
+             delta_velde   = delta_mean_ir_ratio_T025_vs_DMSO,
+             padj_velde    = padj,
+             baseMean_velde = baseMean,
+             log2FC_velde   = log2FoldChange),
+
+    volcano_zhu_6hr_3uM |>
+      filter(intron_id %in% shared_all) |>
+      dplyr::select(intron_id,
+             delta_6hr_3uM   = delta_mean_ir_ratio_CC671_3uM_vs_DMSO,
+             padj_6hr_3uM    = padj,
+             baseMean_6hr_3uM = baseMean,
+             log2FC_6hr_3uM   = log2FoldChange),
+
+    volcano_zhu_6hr_10uM |>
+      filter(intron_id %in% shared_all) |>
+      dplyr::select(intron_id,
+             delta_6hr_10uM   = delta_mean_ir_ratio_CC671_10uM_vs_DMSO,
+             padj_6hr_10uM    = padj,
+             baseMean_6hr_10uM = baseMean,
+             log2FC_6hr_10uM   = log2FoldChange),
+
+    volcano_zhu_24hr_3uM |>
+      filter(intron_id %in% shared_all) |>
+      dplyr::select(intron_id,
+             delta_24hr_3uM   = delta_mean_ir_ratio_CC671_3uM_vs_DMSO,
+             padj_24hr_3uM    = padj,
+             baseMean_24hr_3uM = baseMean,
+             log2FC_24hr_3uM   = log2FoldChange),
+
+    volcano_zhu_24hr_10uM |>
+      filter(intron_id %in% shared_all) |>
+      dplyr::select(intron_id,
+             delta_24hr_10uM   = delta_mean_ir_ratio_CC671_10uM_vs_DMSO,
+             padj_24hr_10uM    = padj,
+             baseMean_24hr_10uM = baseMean,
+             log2FC_24hr_10uM   = log2FoldChange)
+  ),
+  left_join, by = "intron_id"
+)
+
+shared_all_annotated
+```
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(stringr)
+
+shared_all_long <- shared_all_annotated |>
+  pivot_longer(
+    cols = -intron_id,
+    names_to = c(".value", "condition"),
+    names_pattern = "^(delta|padj|baseMean|log2FC)_(.*)$"
+  )
+
+shared_all_long
+shared_all_long <- shared_all_long |>
+  mutate(condition = factor(condition,
+                             levels = c("velde", "6hr_3uM", "6hr_10uM", "24hr_3uM", "24hr_10uM")))
+shared_all_long <- shared_all_long |>
+  mutate(
+    condition = recode(condition,
+      "velde"      = "T-025 1uM 24hrs",
+      "6hr_3uM"    = "CC-671 3uM 6hrs",
+      "6hr_10uM"   = "CC-671 10uM 6hrs",
+      "24hr_3uM"   = "CC-671 3uM 24hrs",
+      "24hr_10uM"  = "CC-671 10uM 24hrs"
+    ),
+    condition = factor(condition,
+      levels = c("T-025 1uM 24hrs",
+                 "CC-671 3uM 6hrs",
+                 "CC-671 10uM 6hrs",
+                 "CC-671 3uM 24hrs",
+                 "CC-671 10uM 24hrs")
+    )
+  )
+
+library(ggplot2)
+
+ggplot(shared_all_long, aes(x = condition, y = intron_id, fill = delta)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
