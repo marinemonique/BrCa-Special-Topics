@@ -603,7 +603,7 @@ ggsave(filename = "SRP1141379_IR_burden.PNG",
 # 6 hours, 3uM
 delta_zhu_6hr_3uM_filter <- delta_ir_srp_zhu |> filter(hours == 6,
                                                        delta_mean_ir_ratio_CC671_3uM_vs_DMSO != "NA" & #8786 introns present in both groups
-                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1) #1268 introns
+                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1) #1648 introns
 
 zhu_mean_6hr_3uM <- srp_combined |>
   filter(IntronID %in% delta_zhu_6hr_3uM_filter$IntronID, hours == 6) |>
@@ -647,7 +647,7 @@ ir_ratio_zhu.1
 ```{r}
 # 6 hours, 10uM
 delta_zhu_6hr_10uM_filter <- delta_ir_srp_zhu |> filter(hours == 6, delta_mean_ir_ratio_CC671_10uM_vs_DMSO != "NA" & # 8548 introns
-                                                          delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1) #1682 introns
+                                                          delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1) #2215 introns
 
 zhu_mean_6hr_10uM <- zhu_mean_6hr_3uM <- srp_combined |>
   filter(IntronID %in% delta_zhu_6hr_10uM_filter$IntronID, hours == 6) |>
@@ -683,7 +683,7 @@ ir_ratio_zhu.2
 # 24 hours, 3uM
 delta_zhu_24hr_3uM_filter <- delta_ir_srp_zhu |> filter(hours == 24,
                                                        delta_mean_ir_ratio_CC671_3uM_vs_DMSO != "NA" & #9302 introns present in both groups
-                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1) #773 introns 
+                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1) #948 introns 
 
 zhu_mean_24hr_3uM <- zhu_mean_24hr_3uM <- srp_combined |>
   filter(IntronID %in% delta_zhu_24hr_3uM_filter$IntronID, hours == 24) |>
@@ -719,7 +719,7 @@ ir_ratio_zhu.3
 ```{r}
 # 24 hours, 10um
 delta_zhu_24hr_10uM_filter <- delta_ir_srp_zhu |> filter(hours == 24, delta_mean_ir_ratio_CC671_10uM_vs_DMSO != "NA" & # 9288 differentially expressed
-                                                 delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1) # 856 introns         
+                                                 delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1) # 1069 introns         
 
 zhu_mean_24hr_10uM <- zhu_mean_24hr_10uM <- srp_combined |>
   filter(IntronID %in% delta_zhu_24hr_10uM_filter$IntronID, hours == 24) |>
@@ -806,6 +806,8 @@ volc_data <- volcano_zhu_6hr_3uM |>
   as.data.frame() |>
   na.omit()
 
+volc_data |> group_by(significance) |> summarise(n_introns = n())
+
 ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj), colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
   scale_colour_identity() +
@@ -869,6 +871,7 @@ volc_data <- volcano_zhu_6hr_10uM |>
   filter(baseMean > 10) |>
   as.data.frame() |>
   na.omit()
+volc_data |> group_by(significance) |> summarise(n_introns = n())
 
 ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj), colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
@@ -909,7 +912,6 @@ ir_l2fc_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio
 ```{r}
 dIR_24hrs_CC671_3uM_vs_DMSO <- read_csv("results/ir/SRP141379/24hr/CC671_3uM_vs_DMSO.csv") |> 
   mutate(intron_id = `...1`)
-
 delta_ir_24hr_3uM <- delta_ir_srp_zhu |> filter(hours == 24)
 
 
@@ -933,6 +935,8 @@ volc_data <- volcano_zhu_24hr_3uM |>
   filter(baseMean > 10) |> #9332 introns
   as.data.frame() |>
   na.omit()
+
+volc_data |> group_by(significance) |> summarise(n_introns = n())
 
 ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj), colour = significance)) +
   geom_point(alpha = 0.6, size = 0.7) +
@@ -997,6 +1001,7 @@ volc_data <- volcano_zhu_24hr_10uM |>
   filter(baseMean > 10) |>
   as.data.frame() |>
   na.omit()
+volc_data |> group_by(significance) |> summarise(n_introns = n())
 
 ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj), colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
@@ -1095,8 +1100,6 @@ ggplot() +
        title = "SRP112607")+
   scale_y_continuous(limits = c(0, 8500))+
   theme(panel.grid.major.x = element_blank())
-
-
 
 ```
 
@@ -1631,24 +1634,8 @@ ggsave(filename = "dEG_SRP141379_volcano.PNG",
 ```
 
 
-# 9. Gene ontology of dEGs
-
-## 9.1. Velde et al. 2026 (DMSO vs T025)
-
-## 9.2. Zhu et al. 2018
-### CC671 3uM @ 6 hours
-
-### CC671 10uM @ 6 hours
-
-### CC671 3uM @ 24 hours
-
-### CC671 10uM @ 24 hours
-
-## 9.3. Iwai et al. 2018
-
-
-# 10. Cross study comparisons
-## 10.1. Are intron events consistent between T-025 and CC-671 after 24 hours?
+# 9. Cross study comparisons
+## 9.1. Are intron events consistent between T-025 and CC-671 after 24 hours?
 ```{r}
 volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
 volcano_velde <- volcano_velde |> 
@@ -1685,8 +1672,8 @@ filter_hits <- function(df, delta_col, delta_thresh = 0.1) {
   df |>
     filter(
       .data[[delta_col]] >= delta_thresh,   # only increases in IR ratio
-      significance != "#a3a8ac",
-      baseMean > 10
+      significance != "#a3a8ac", # FDR < 0.01
+      baseMean > 10 #expression sufficient for differential analysis
     ) |>
     pull(intron_id)
 }
@@ -1717,14 +1704,36 @@ comparison_results
 library(UpSetR)
 
 all_hits <- list(
-  Velde     = velde_hits,
-  `6hr_3uM`   = filter_hits(volcano_zhu_6hr_3uM,   "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
-  `6hr_10uM`  = filter_hits(volcano_zhu_6hr_10uM,  "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
-  `24hr_3uM`  = filter_hits(volcano_zhu_24hr_3uM,  "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
-  `24hr_10uM` = filter_hits(volcano_zhu_24hr_10uM, "delta_mean_ir_ratio_CC671_10uM_vs_DMSO")
+  `T-025 1uM 24hr`    = velde_hits,
+  `CC-671 3uM 6hr`   = filter_hits(volcano_zhu_6hr_3uM,   "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  `CC-671 10uM 6hr`  = filter_hits(volcano_zhu_6hr_10uM,  "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
+  `CC-671 3uM 24hr`  = filter_hits(volcano_zhu_24hr_3uM,  "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  `CC-671 10uM 24hr` = filter_hits(volcano_zhu_24hr_10uM, "delta_mean_ir_ratio_CC671_10uM_vs_DMSO")
 )
 
-upset(fromList(all_hits), order.by = "freq")
+# upset(fromList(all_hits), order.by = "freq")
+
+set_sizes <- sapply(all_hits, length)
+sorted_names <- names(sort(set_sizes, decreasing = TRUE))
+
+# rebuild bar_colors in the same sorted order
+color_lookup <- c(
+  `T-025 1uM 24hr`    = "#005b96",
+  `CC-671 3uM 6hr`    = "#ee5d6c",
+  `CC-671 10uM 6hr`   = "#ee5d6c",
+  `CC-671 3uM 24hr`   = "#ce4993",
+  `CC-671 10uM 24hr`  = "#ce4993"
+)
+sorted_colors <- color_lookup[sorted_names]
+
+dIR_significant_shared_plot <- upset(fromList(all_hits),
+      order.by = "freq",
+      sets = sorted_names,
+      keep.order = TRUE,
+      sets.bar.color = sorted_colors,
+      text.scale = 1.5)
+
+
 ```
 
 ```{r}
