@@ -20,11 +20,6 @@ source("ir_helpers.R")   # for make_ir_id()
 metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
 metadata_sc5903_mw <- metadata_sc5903_mw |> 
   mutate(conc_uM = factor(conc_uM, ordered = TRUE))
-
-delta_ir_srp_iwai <- read_tsv(
-  "results/ir/SRP112607_delta_ir.tsv",
-  show_col_types = FALSE
-)
 ```
 
 # 1. Download data
@@ -103,6 +98,11 @@ Velde <- metadata_sc5903_mw %>% filter(Citation == "Velde et al. 2026")
 
 Iwai <- metadata_sc5903_mw |> filter(Citation == "Iwai et al. 2018") 
 Iwai <- Iwai |> mutate(Concentration = factor(Concentration, levels = c("0nM", "30nM", "100nM", "300nM"), ordered = TRUE))
+
+delta_ir_srp_iwai <- read_tsv(
+  "results/ir/SRP112607_delta_ir.tsv",
+  show_col_types = FALSE
+)
 ```
 
 ## 6.1. Velde et al. 2026 (DMSO vs T025)
@@ -1449,7 +1449,8 @@ volcano_zhu_6hr_3uM_gene <-ggplot(volc_data, aes(x = log2FoldChange, y = -log10(
   labs(
     x = expression("log2FoldChange (CC671 3" * mu * "M/DMSO)"),
        title = "6 hours") +
-  theme(panel.grid.minor = element_blank())
+  theme(panel.grid.minor = element_blank())+
+  scale_x_continuous(limits = c(-5, 11))
 ```
 
 #### Upregulated genes
@@ -1486,9 +1487,9 @@ dEG_6hr_CC671_10uM_vs_DMSO <- dEG_6hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID" =
 dEG_6hr_CC671_10uM_vs_DMSO <- dEG_6hr_CC671_10uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
       log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
-      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     ))
 
@@ -1510,9 +1511,11 @@ volcano_zhu_6hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log1
   scale_colour_identity() +
   theme_bw()+
   labs(
-     x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)"),
-       title = "6 hours")+
-  theme(panel.grid.minor = element_blank())
+     x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)")
+     #, title = "6 hours"
+     )+
+  theme(panel.grid.minor = element_blank())+
+  scale_x_continuous(limits = c(-5, 11))
 ```
 
 #### Upregulated genes
@@ -1558,7 +1561,8 @@ volcano_zhu_24hr_3uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log1
   theme_bw()+
   labs(x = expression("log2FoldChange (CC671 3" * mu * "M/DMSO)"),
        title = "24 hours")+
-  theme(panel.grid.minor = element_blank())
+  theme(panel.grid.minor = element_blank())+
+  scale_x_continuous(limits = c(-5, 7.5))
 ```
 
 #### Upregulated genes
@@ -1595,20 +1599,29 @@ ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significanc
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs( x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)"),
-       title = "24 hours")
+  labs(x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)")#,title = "24 hours"
+       )
 
 volcano_zhu_24hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
   geom_point(size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
-  labs( x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)"),
-       title = "24 hours")+
-  theme(panel.grid.minor = element_blank())
+  labs( x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)")
+        #, title = "24 hours"
+        )+
+  theme(panel.grid.minor = element_blank())+
+  scale_x_continuous(limits = c(-5, 7.5))
 ```
 
 ```{r}
-ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_6hr_10uM_gene, volcano_zhu_24hr_3uM_gene, volcano_zhu_24hr_10uM_gene, ncol =2, nrow = 2)
+dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_24hr_3uM_gene, volcano_zhu_6hr_10uM_gene,  volcano_zhu_24hr_10uM_gene, ncol =2, nrow = 2, labels = c("A", "B", "", ""))
+
+ggsave(filename = "dEG_SRP141379_volcano.PNG",
+       plot = dEG_SRP141379_volcano,
+       height = 180,
+       width = 180,
+       unit = "mm")
+
 ```
 
 
