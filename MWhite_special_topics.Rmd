@@ -1458,7 +1458,7 @@ volcano_zhu_6hr_3uM_gene <-ggplot(volc_data, aes(x = log2FoldChange, y = -log10(
   labs(
     x = expression("log2FoldChange (CC671 3" * mu * "M/DMSO)"),
        title = "6 hours") +
-  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid= element_blank())+
   scale_x_continuous(limits = c(-5, 11))
 ```
 
@@ -1523,7 +1523,7 @@ volcano_zhu_6hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log1
      x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)")
      #, title = "6 hours"
      )+
-  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid = element_blank())+
   scale_x_continuous(limits = c(-5, 11))
 ```
 
@@ -1570,7 +1570,7 @@ volcano_zhu_24hr_3uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log1
   theme_bw()+
   labs(x = expression("log2FoldChange (CC671 3" * mu * "M/DMSO)"),
        title = "24 hours")+
-  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid = element_blank())+
   scale_x_continuous(limits = c(-5, 7.5))
 ```
 
@@ -1588,7 +1588,6 @@ dEG_24hr_CC671_3uM_vs_DMSO |>
 ```{r}
 dEG_24hr_CC671_10uM_vs_DMSO <- read_csv("results/genes/SRP141379/24hr/CC671_10uM_vs_DMSO.csv")
 dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID" = ...1)
-
 
 dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
@@ -1618,7 +1617,7 @@ volcano_zhu_24hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log
   labs( x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)")
         #, title = "24 hours"
         )+
-  theme(panel.grid.minor = element_blank())+
+  theme(panel.grid = element_blank())+
   scale_x_continuous(limits = c(-5, 7.5))
 ```
 
@@ -1731,10 +1730,62 @@ dIR_significant_shared_plot <- upset(fromList(all_hits),
       sets = sorted_names,
       keep.order = TRUE,
       sets.bar.color = sorted_colors,
-      text.scale = 1.5)
+      text.scale = 1.2)
 
 
 ```
+
+```{r}
+library(UpSetR)
+
+all_hits <- list(
+  `T-025 1uM 24hr`    = velde_hits,
+  `CC-671 3uM 6hr`   = filter_hits(volcano_zhu_6hr_3uM,   "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  `CC-671 10uM 6hr`  = filter_hits(volcano_zhu_6hr_10uM,  "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
+  `CC-671 3uM 24hr`  = filter_hits(volcano_zhu_24hr_3uM,  "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  `CC-671 10uM 24hr` = filter_hits(volcano_zhu_24hr_10uM, "delta_mean_ir_ratio_CC671_10uM_vs_DMSO")
+)
+
+set_sizes <- sapply(all_hits, length)
+sorted_names <- names(sort(set_sizes, decreasing = TRUE))
+
+color_lookup <- c(
+  `T-025 1uM 24hr`    = "#005b96",
+  `CC-671 3uM 6hr`    = "#ee5d6c",
+  `CC-671 10uM 6hr`   = "#ee5d6c",
+  `CC-671 3uM 24hr`   = "#ce4993",
+  `CC-671 10uM 24hr`  = "#ce4993"
+)
+sorted_colors <- color_lookup[sorted_names]
+
+# metadata for row shading — must match sorted_names order
+metadata <- data.frame(
+  sets  = sorted_names,
+  study = ifelse(sorted_names == "T-025 1uM 24hr", "T-025", "CC-671")
+)
+
+dIR_significant_shared_plot <- upset(
+  fromList(all_hits),
+  order.by = "freq",
+  sets = sorted_names,
+  keep.order = TRUE,
+  sets.bar.color = sorted_colors,
+  text.scale = 1.2,
+  set.metadata = list(
+    data = metadata,
+    plots = list(
+      list(type = "matrix_rows",
+           column = "study",
+           colors = c("T-025" = "#cccccc",
+                      "CC-671" = "#a3a3a3"),
+           alpha = 0.5)
+    )
+  )
+)
+
+dIR_significant_shared_plot
+```
+
 
 ```{r}
 library(dplyr)
@@ -1910,4 +1961,120 @@ ggplot(shared_all_long, aes(x = condition, y = intron_id, fill = delta)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+
+# 10. Plots for report
+```{r}
+# merge delta IR and the dIR data
+volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
+
+volcano_velde <- volcano_velde |> 
+  mutate(
+    meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
+                  delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
+    significance = case_when(
+      meets_delta & padj < 0.01  ~ "#701705",
+      TRUE                       ~ "#a3a8ac")) |> 
+  filter(baseMean > 10)
+
+volcano_velde |> group_by(significance) |> summarise(n_introns = n())
+
+volc_data <- volcano_velde |>
+  filter(baseMean > 10) |> #ensures that only introns with enough expression are included
+  as.data.frame() |>
+  na.omit()
+
+ir_volcano_plot_ERP171667 <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = -log10(padj), colour = significance)) +
+  geom_point(alpha = 0.6, size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  scale_x_continuous(limits = c(-1, 1)) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())+
+  labs(x = expression(Delta ~ "IR ratio (T-025 1" * mu * "M/DMSO)"))
+
+erp_delta_ir_ratio_log2Fold <- left_join(
+  Velde_T025_vs_DMSO, delta_erp,
+  by = join_by(intron_id == IntronID)
+) |>
+  mutate(
+    meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
+                  delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
+    significance = case_when(
+      meets_delta & padj < 0.01 ~ "#701705",
+      TRUE                      ~ "#a3a8ac"
+    ))
+
+ir_l2fc_plot_ERP171667 <- ggplot() +
+  theme_bw() +
+  geom_point(
+    data = erp_delta_ir_ratio_log2Fold,
+    aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = log2FoldChange, color = significance),
+    size = 0.6
+  ) +
+  scale_color_identity() +
+  labs(x = expression(Delta ~ "IR ratio (T-025 1" * mu * "M/DMSO)")) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+ERP171667_volc_l2fc <- ggarrange(ir_volcano_plot_ERP171667, ir_l2fc_plot_ERP171667, labels = c("B", "C"), ncol = 1)
+
+ERP_ir_plot1 <- ggarrange(ERP171667_IR_burden, ERP171667_volc_l2fc, labels = c("A", ""), ncol = 2, widths = c(1, 0.8))
+
+dEG_T025_vs_DMSO <- read_csv("results/genes/ERP171667/T025_vs_DMSO.csv") 
+dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> mutate("EnsemblID" = ...1)
+
+dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
+  mutate(
+    significance = case_when(
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+      log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.01  ~ "#701705",
+      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+      TRUE                       ~ "#a3a8ac"))
+
+dEG_T025_vs_DMSO |> group_by(significance) |> summarise(n_genes = n())
+
+volc_data <- dEG_T025_vs_DMSO |>
+  filter(baseMean > 10) |>
+  as.data.frame() |>
+  na.omit()
+
+deg_ERP171667_plot <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+  geom_point(size = 0.6) +
+  scale_colour_identity() +
+  theme_bw()+
+  labs(x = expression("Gene log2FoldChange (T-025 1" * mu * "M/DMSO)")) +
+  theme(panel.grid = element_blank())
+
+ERP_ir_plot <- ggarrange(ERP_ir_plot1, deg_ERP171667_plot, ncol =1,heights = c(1.5, 0.7), labels = c("", "D"))
+
+ggsave(filename = "ERP171667_ir_plot.PNG",
+       plot = ERP_ir_plot,
+       width = 180,
+       height = 200,
+       unit = "mm")
+
+ggsave(filename = "ERP171667_ir_plot1.PNG",
+       plot = ERP_ir_plot1,
+       width = 180,
+       height = 160,
+       unit = "mm")
+
+```
+
+## Differentially expressed genes
+
+```{r}
+dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_24hr_3uM_gene, volcano_zhu_6hr_10uM_gene,  volcano_zhu_24hr_10uM_gene, ncol =2, nrow = 2, labels = c("B", "C", "", ""))
+
+plot_deg <- ggarrange(deg_ERP171667_plot, dEG_SRP141379_volcano, ncol = 1, labels = c("A", ""), heights = c(1, 2))
+
+plot_deg
+
+ggsave(plot = plot_deg,
+       filename = "DEG_combined.PNG",
+       height = 180,
+       width = 180, unit = "mm")
+```
+
+
 
