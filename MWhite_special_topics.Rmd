@@ -823,12 +823,8 @@ volcano_zhu_6hr_3uM <- left_join(
     meets_delta = delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.1 |
                   delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1,
     significance = case_when(
-      #meets_delta & padj < 0.001 ~ "red",
       meets_delta & padj < 0.01  ~ "#701705",
-      #meets_delta & padj < 0.05  ~ "salmon",
-      TRUE                       ~ "#a3a8ac"
-    )
-  )
+      TRUE                       ~ "#a3a8ac"))
 
 volc_data <- volcano_zhu_6hr_3uM |>
   filter(baseMean > 10) |>
@@ -837,19 +833,10 @@ volc_data <- volcano_zhu_6hr_3uM |>
 
 volc_data |> group_by(significance) |> summarise(n_introns = n())
 
-ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj), colour = significance)) +
-  geom_point(alpha = 0.6, size = 0.6) +
-  geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_hline(yintercept = -log10(0.01), linetype = "dashed", alpha = 0.7, colour = "black",size = 0.5)+
-  scale_colour_identity() +
-  theme_bw()+
-  scale_x_continuous(limits = c(-1, 1)) +
-  theme(panel.grid = element_blank())+
-  labs(title = "6 hours, CC671 3uM vs DMSO",
-       x = expression(Delta ~ "IR ratio"))
 
-ir_volcano_plot_SRP141379_3uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj), colour = significance)) +
+ir_volcano_plot_SRP141379_3uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO,
+                                                           y = -log10(padj),
+                                                           colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
@@ -897,9 +884,7 @@ volcano_zhu_6hr_10uM <- left_join(
       #meets_delta & padj < 0.001 ~ "red",
       meets_delta & padj < 0.01  ~ "#701705",
       #meets_delta & padj < 0.05  ~ "salmon",
-      TRUE                       ~ "#a3a8ac"
-    )
-  )
+      TRUE                       ~ "#a3a8ac"))
 
 volc_data <- volcano_zhu_6hr_10uM |>
   filter(baseMean > 10) |>
@@ -907,19 +892,9 @@ volc_data <- volcano_zhu_6hr_10uM |>
   na.omit()
 volc_data |> group_by(significance) |> summarise(n_introns = n())
 
-ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj), colour = significance)) +
-  geom_point(alpha = 0.6, size = 0.6) +
-  scale_colour_identity() +
-  geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_hline(yintercept = -log10(0.01), linetype = "dashed", alpha = 0.7, colour = "black",size = 0.5)+
-  scale_x_continuous(limits = c(-1, 1)) +
-  theme(panel.grid = element_blank())+
-  theme_bw()+
-  labs(title = "6 hours, CC671 10uM vs DMSO",
-       x = expression(Delta ~ "IR ratio"))
-
-ir_volcano_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj), colour = significance)) +
+ir_volcano_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO,
+                                                            y = -log10(padj), 
+                                                            colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
   geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
   geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
@@ -933,7 +908,9 @@ ir_volcano_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ra
        x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)"))
 
 # IR ratio and log2 fold change
-ir_l2fc_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = log2FoldChange, colour = significance)) +
+ir_l2fc_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO,
+                                                         y = log2FoldChange,
+                                                         colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
@@ -980,16 +957,10 @@ volc_data <- volcano_zhu_24hr_3uM |>
 
 volc_data |> group_by(significance) |> summarise(n_introns = n())
 
-ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj), colour = significance)) +
-  geom_point(alpha = 0.6, size = 0.7) +
-  scale_colour_identity() +
-  theme_bw()+
-  scale_x_continuous(limits = c(-1, 1)) +
-  theme(panel.grid = element_blank())+
-  labs(title = "24 hours",
-       x= expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)"))
 
-ir_volcano_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = -log10(padj), colour = significance)) +
+ir_volcano_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO,
+                                                            y = -log10(padj),
+                                                            colour = significance)) +
   geom_point(alpha = 0.6, size = 0.7) +
   geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
   geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
@@ -1002,7 +973,9 @@ ir_volcano_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ra
        x= expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)"))
 
 # Delta IR a d log2Fold
-ir_l2fc_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = log2FoldChange, colour = significance)) +
+ir_l2fc_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO,
+                                                         y = log2FoldChange,
+                                                         colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
@@ -1050,17 +1023,9 @@ volc_data <- volcano_zhu_24hr_10uM |>
   na.omit()
 volc_data |> group_by(significance) |> summarise(n_introns = n())
 
-ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj), colour = significance)) +
-  geom_point(alpha = 0.6, size = 0.6) +
-  scale_colour_identity() +
-  theme_bw()+
-  scale_x_continuous(limits = c(-1, 1)) +
-  theme(panel.grid = element_blank())+
-  labs(title = "24 hours",
-       x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)"))
-
-
-ir_volcano_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = -log10(padj), colour = significance)) +
+ir_volcano_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO,
+                                                             y = -log10(padj),
+                                                             colour = significance)) +
   geom_point(alpha = 0.6, size = 0.6) +
   scale_colour_identity() +
   theme_bw()+
@@ -1082,9 +1047,7 @@ ir_l2fc_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_rati
   theme_bw()+
   scale_x_continuous(limits = c(-1, 1)) +
   theme(panel.grid = element_blank())+
-  labs(
-    #title = "24 hours",
-       x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)")) +
+  labs(x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)")) +
   theme(panel.grid = element_blank(),
         panel.grid.major = element_blank())
 ```
@@ -1093,7 +1056,6 @@ ir_l2fc_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_rati
 
 ```{r}
 ir_volcano_plot_full_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_6hr, ir_volcano_plot_SRP141379_10uM_6hr, ir_volcano_plot_SRP141379_3uM_24hr, ir_volcano_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("A", "B", "C", "D"))
-
 
 ggsave(ir_volcano_plot_full_SRP141379,
        filename = "ir_volc_SRP141379.pdf",
@@ -1143,7 +1105,7 @@ ggplot() +
 
 ggplot() +
   #geom_boxplot(data = Velde, aes(x = exp_design, y = n_introns)) +
-  geom_point(data = Iwai, aes(x = conc_uM, y = sample_introns, colour = exp_design), size = 3, width = 0.1, height = 0) +
+  geom_point(data = Iwai, aes(x = conc_uM, y = sample_introns, colour = exp_design), size = 3) +
   theme_bw()+
   labs(y = "Intron retention events", colour = "",
        x = expression("T-025 Concentration (" * mu * "M)") #title = "SRP112607"
@@ -1386,13 +1348,6 @@ volc_data <- dEG_24hr_CC671_3uM_vs_DMSO |>
   na.omit()
 volc_data |> group_by(significance) |> summarise(n_introns = n())
 
-ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
-  geom_point(size = 0.6) +
-  scale_colour_identity() +
-  theme_bw()+
-  labs(
-     x = expression("log2FoldChange (CC671 3" * mu * "M/DMSO)"),
-       title = "24 hours")
 
 volcano_zhu_24hr_3uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
   geom_point(size = 0.6) +
@@ -1437,13 +1392,6 @@ volc_data <- dEG_24hr_CC671_10uM_vs_DMSO |>
   na.omit()
 volc_data |> group_by(significance) |> summarise(n_introns = n())
 
-ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
-  geom_point(size = 0.6) +
-  scale_colour_identity() +
-  theme_bw()+
-  labs(x = expression("log2FoldChange (CC671 10" * mu * "M/DMSO)")#,title = "24 hours"
-       )
-
 volcano_zhu_24hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
   geom_point(size = 0.6) +
   scale_colour_identity() +
@@ -1459,14 +1407,18 @@ volcano_zhu_24hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log
 ```
 
 ```{r}
-dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_24hr_3uM_gene, volcano_zhu_6hr_10uM_gene,  volcano_zhu_24hr_10uM_gene, ncol =2, nrow = 2, labels = c("A", "B", "", ""))
+dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene, 
+                                   volcano_zhu_24hr_3uM_gene, 
+                                   volcano_zhu_6hr_10uM_gene,  
+                                   volcano_zhu_24hr_10uM_gene, 
+                                   ncol =2, nrow = 2, 
+                                   labels = c("A", "B", "", ""))
 
 ggsave(filename = "dEG_SRP141379_volcano.PNG",
        plot = dEG_SRP141379_volcano,
        height = 180,
        width = 180,
        unit = "mm")
-
 ```
 
 
@@ -1482,9 +1434,7 @@ volcano_velde <- volcano_velde |>
       #meets_delta & padj < 0.001 ~ "red",
       meets_delta & padj < 0.01  ~ "#701705",
       #meets_delta & padj < 0.05  ~ "salmon",
-      TRUE                       ~ "#a3a8ac"
-    )
-  )
+      TRUE                       ~ "#a3a8ac")  )
 
 sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(baseMean > 10,
   padj < 0.01, 
@@ -1503,7 +1453,7 @@ zhu_datasets <- list(
   "24hr_10uM" = list(df = volcano_zhu_24hr_10uM, delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO")
 )
 
-
+# only increases in IR ratio
 filter_hits <- function(df, delta_col, delta_thresh = 0.1) {
   df |>
     filter(
@@ -1513,6 +1463,7 @@ filter_hits <- function(df, delta_col, delta_thresh = 0.1) {
     ) |>
     pull(intron_id)
 }
+
 
 # ERP171667 hits (baseline, computed once)
 
@@ -1534,6 +1485,73 @@ comparison_results <- map_dfr(names(zhu_datasets), function(nm) {
 })
 
 comparison_results
+```
+
+#### increased
+
+```{r}
+# only increases in IR ratio
+filter_hits <- function(df, delta_col, delta_thresh = 0.1) {
+  df |>
+    filter(
+      .data[[delta_col]] >= delta_thresh,   # only increases in IR ratio
+      significance != "#a3a8ac", # FDR < 0.01
+      baseMean > 10 #expression sufficient for differential analysis
+    ) |>
+    pull(intron_id)
+}
+zhu_datasets <- list(
+"6hr_3uM"   = list(df = volcano_zhu_6hr_3uM,   delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+"6hr_10uM"  = list(df = volcano_zhu_6hr_10uM,  delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
+"24hr_3uM"  = list(df = volcano_zhu_24hr_3uM,  delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+"24hr_10uM" = list(df = volcano_zhu_24hr_10uM, delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"))
+
+ # Apply filter_hits across each dataset in the list
+ sig_list_introns <- lapply(zhu_datasets, function(x) {
+filter_hits(x$df, x$delta_col) })
+ 
+ # Add the Velde dataset in the same way
+ sig_list_introns[["T025_1uM (Velde)"]] <- filter_hits(
+volcano_velde,
+delta_col = "delta_mean_ir_ratio_T025_vs_DMSO"
+)
+ 
+ # quick sanity check
+sapply(sig_list_introns, length)
+```
+
+#### both directions
+```{r}
+# If want both directions
+filter_hits <- function(df, delta_col, delta_thresh = 0.1) {
+  df |>
+    filter(
+      abs(.data[[delta_col]]) >= delta_thresh,
+      significance != "#a3a8ac",
+      baseMean > 10
+    ) |>
+    pull(intron_id)
+}
+ 
+zhu_datasets <- list(
+"6hr_3uM"   = list(df = volcano_zhu_6hr_3uM,   delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+"6hr_10uM"  = list(df = volcano_zhu_6hr_10uM,  delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
+"24hr_3uM"  = list(df = volcano_zhu_24hr_3uM,  delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+"24hr_10uM" = list(df = volcano_zhu_24hr_10uM, delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"))
+
+ # Apply filter_hits across each dataset in the list
+ sig_list_introns <- lapply(zhu_datasets, function(x) {
+filter_hits(x$df, x$delta_col) })
+ 
+ # Add the Velde dataset in the same way
+ sig_list_introns[["T025_1uM (Velde)"]] <- filter_hits(
+volcano_velde,
+delta_col = "delta_mean_ir_ratio_T025_vs_DMSO"
+)
+ 
+ # quick sanity check
+sapply(sig_list_introns, length)
+
 ```
 
 ```{r}
@@ -1568,8 +1586,6 @@ dIR_significant_shared_plot <- upset(fromList(all_hits),
       keep.order = TRUE,
       sets.bar.color = sorted_colors,
       text.scale = 1.2)
-
-
 ```
 
 ```{r}
@@ -1616,9 +1632,7 @@ dIR_significant_shared_plot <- upset(
            colors = c("T-025" = "#cccccc",
                       "CC-671" = "#a3a3a3"),
            alpha = 0.5)
-    )
-  )
-)
+    )  ))
 
 dIR_significant_shared_plot
 ```
@@ -1798,6 +1812,40 @@ ggplot(shared_all_long, aes(x = condition, y = intron_id, fill = delta)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+
+```{r}
+filter_hits <- function(df, delta_col, delta_thresh = 0.1) {
+  df |>
+    filter(
+      .data[[delta_col]] >= delta_thresh,   # only increases in IR ratio
+      significance != "#a3a8ac",            # FDR < 0.01
+      baseMean > 10                         # expression sufficient for differential analysis
+    ) |>
+    pull(intron_id)
+}
+
+zhu_datasets <- list(
+  "6hr_3uM"   = list(df = volcano_zhu_6hr_3uM,   delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  "6hr_10uM"  = list(df = volcano_zhu_6hr_10uM,  delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO"),
+  "24hr_3uM"  = list(df = volcano_zhu_24hr_3uM,  delta_col = "delta_mean_ir_ratio_CC671_3uM_vs_DMSO"),
+  "24hr_10uM" = list(df = volcano_zhu_24hr_10uM, delta_col = "delta_mean_ir_ratio_CC671_10uM_vs_DMSO")
+)
+
+# Apply filter_hits across each dataset in the list
+sig_list_introns <- lapply(zhu_datasets, function(x) {
+  filter_hits(x$df, x$delta_col)
+})
+
+# Add the Velde dataset in the same way
+sig_list_introns[["T025_1uM (Velde)"]] <- filter_hits(
+  volcano_velde,
+  delta_col = "delta_mean_ir_ratio_T025_vs_DMSO"
+)
+
+# quick sanity check
+sapply(sig_list_introns, length)
+```
+
 
 ## 9.2. Are differentially expressed genes consistent among treatments?
 ```{r}
