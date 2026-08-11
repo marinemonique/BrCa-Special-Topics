@@ -1024,8 +1024,7 @@ ir_ratio_zhu.1 <- ggplot() +
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
     x = expression("mean IR ratio (CC671 3" * mu * "M)"),
-    y = "mean IR ratio (DMSO)",
-    title = "6 hours" )
+    y = "mean IR ratio (DMSO)")
 
 ir_ratio_zhu.1
 
@@ -1122,8 +1121,7 @@ ir_ratio_zhu.2 <- ggplot() +
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1) +
   labs(
     x = expression("mean IR ratio (CC671 10" * mu * "M)"),
-    y = "mean IR ratio (DMSO)",
-    title = "6 hours")
+    y = "mean IR ratio (DMSO)")
 
 ir_ratio_zhu.2
 
@@ -2526,6 +2524,55 @@ shared_all_df |> filter(is.na(symbol_final))
 # 10. Plots for report
 ## Liu et al. 2025 Introns
 ```{r}
+mean_Velde <- Velde |>
+  group_by(conc_uM, exp_design) |>
+  summarise(
+    mean_dir = mean(sample_introns),
+    se_dir   = sd(sample_introns) / sqrt(n()),
+    .groups  = "drop"
+  ) |>
+  mutate(conc_uM = factor(conc_uM))
+
+Velde <- Velde |> mutate(conc_uM = factor(conc_uM))
+
+sig_df_Velde <- data.frame(
+  xmin = "0",
+  xmax = "1",
+  y_position = 3700,
+  annotations = "*"   # p = 0.0158
+)
+
+ERP171667_IR_burden <- ggplot() +
+  geom_col(data = mean_Velde, aes(x = conc_uM, y = mean_dir), fill = "#9E9E9E", colour = "black") +
+  geom_jitter(data = Velde, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
+  geom_errorbar(
+    data = mean_Velde,
+    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), width = 0.1) +
+  geom_signif(
+    data = sig_df_Velde,
+    aes(xmin = xmin, xmax = xmax, y_position = y_position, annotations = annotations),
+    manual = TRUE,
+    tip_length = 0.01,
+    textsize = 4
+  ) +
+  theme_bw() +
+  labs(y = "Intron retention events",
+       x = expression("T-025 Concentration (" * mu * "M)")#, title = "ERP171667"
+       ) +
+  scale_y_continuous(limits = c(0, 5250)) +
+  theme(panel.grid.major.x = element_blank(),
+        text = element_text(size = 11),
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        axis.title = element_text(size = 12),
+        title = element_text(size = 11),
+        legend.title = element_blank(),
+        legend.position = "right",
+        legend.margin = margin(t = 0, b = 0),       # trims padding above/below legend
+        legend.box.spacing = unit(0.2, "cm"))
+
+ERP171667_IR_burden
+
 ERP171667_ir_ratio_delta_ir <- ggplot() +
   geom_point(data = erp_wide, aes(x = T025, y = DMSO), alpha = 0.4, size = 0.5) +
   theme_bw()+
@@ -2670,19 +2717,15 @@ ggsave(filename = "ERP171667_ir_plot.PDF",
 ## Zhu et al Introns
 ### 6 hours
 ```{r}
-mean_Zhu <- Zhu |> group_by(exp_design, Hours, conc_uM) |> 
-  summarise(
-    mean_dir = mean(sample_introns),
-    se_dir   = sd(sample_introns) / sqrt(n()),   # sd / sqrt(n)
-    .groups  = "drop")
+sig_df_6hr <- data.frame(
+  xmin = c("0", "0", "3"),
+  xmax = c("3", "10", "10"),
+  y_position = c(4950, 5200, 4700),
+  annotations = c("****", "****", "**")   # Hours=6: p<0.0001, p<0.0001, p=0.0029
+)
 
-# Define labels for the facet
-hour_labels <- c(
-  "6"  = "6 hours",
-  "24" = "24 hours")
-
-mean_Zhu_6hr <- mean_Zhu |> filter(Hours == 6)
-Zhu_6hr <- Zhu |> filter(Hours == 6)
+mean_Zhu_6hr <- mean_Zhu |> filter(Hours == 6) |> mutate(conc_uM = factor(conc_uM))
+Zhu_6hr       <- Zhu |> filter(Hours == 6) |> mutate(conc_uM = factor(conc_uM))
 
 IR_burden_SRP1141379_6hr <- ggplot() +
   geom_col(data = mean_Zhu_6hr, aes(x = conc_uM, y = mean_dir),
@@ -2692,20 +2735,28 @@ IR_burden_SRP1141379_6hr <- ggplot() +
     data = mean_Zhu_6hr,
     aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
     width = 0.1) +
+  geom_signif(
+    data = sig_df_6hr,
+    aes(xmin = xmin, xmax = xmax, y_position = y_position, annotations = annotations),
+    manual = TRUE,
+    tip_length = 0.01,
+    textsize = 4
+  ) +
   theme_bw() +
   labs(
     y = "Intron retention events", 
     x = expression("CC-671 Concentration (" * mu * "M)")) +
-  scale_y_continuous(limits = c(0, 5000))+
+  scale_y_continuous(limits = c(0, 5250)) +
   theme(panel.grid.major.x = element_blank(),
         text = element_text(size = 11),
         legend.text = element_text(size = 11),
         strip.text = element_text(size = 11),
         axis.title = element_text(size = 12),
-        title = element_text(size = 14),
+        title = element_text(size = 11),
         legend.title = element_blank(),
-        legend.position = c(0.05, 0.99),
-legend.justification = c("left", "top"))
+        legend.position = "right",
+        legend.margin = margin(t = 0, b = 0),       # trims padding above/below legend
+        legend.box.spacing = unit(0.2, "cm"))       # gap between plot panel and legend)
 
 IR_burden_SRP1141379_6hr
 
@@ -2718,7 +2769,7 @@ ir_ratio_zhu_6hours
 
 ir_volcano_plot_6hr_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_6hr, ir_volcano_plot_SRP141379_10uM_6hr, ncol = 2, labels = c("D", "G"))
 
-Zhu_6hours_ir <- ggarrange(IR_burden_SRP1141379_6hr, ir_ratio_zhu_6hours, ir_volcano_plot_6hr_SRP141379,  ncol = 1, heights = c(1, 2, 1), labels = c("A", ""))
+Zhu_6hours_ir <- ggarrange(IR_burden_SRP1141379_6hr, ir_ratio_zhu_6hours, ir_volcano_plot_6hr_SRP141379,  ncol = 1, heights = c(1, 2, 1), labels = c("A 6 hours", ""))
 Zhu_6hours_ir
 
 ggsave(Zhu_6hours_ir,
@@ -2750,35 +2801,16 @@ hour_labels <- c(
   "6"  = "6 hours",
   "24" = "24 hours")
 
-mean_Zhu_24hr <- mean_Zhu |> filter(Hours == 24)
-Zhu_24hr <- Zhu |> filter(Hours == 24)
-
-IR_burden_SRP1141379_24hr <- ggplot() +
-  geom_col(data = mean_Zhu_24hr, aes(x = conc_uM, y = mean_dir),
-           fill = "#9E9E9E", colour = "black") +
-  geom_jitter(data = Zhu_24hr, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
-  geom_errorbar(
-    data = mean_Zhu_24hr,
-    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
-    width = 0.1) +
-  theme_bw() +
-  labs(
-    y = "Intron retention events", 
-    x = expression("CC-671 Concentration (" * mu * "M)")) +
-  scale_y_continuous(limits = c(0, 5000))+
-  theme(panel.grid.major.x = element_blank(),
-        text = element_text(size = 11),
-        legend.text = element_text(size = 11),
-        strip.text = element_text(size = 11),
-        axis.title = element_text(size = 12),
-        title = element_text(size = 14),
-        legend.title = element_blank(),
-        legend.position = c(0.05, 0.99),
-legend.justification = c("left", "top"))
-
 mean_Zhu_24hr <- mean_Zhu |> filter(Hours == 24) |> mutate(conc_uM = factor(conc_uM))
 Zhu_24hr       <- Zhu |> filter(Hours == 24) |> mutate(conc_uM = factor(conc_uM))
 
+sig_df_24hr <- data.frame(
+  xmin = c("0", "0", "3"),
+  xmax = c("3", "10", "10"),
+  y_position = c(3800, 4100, 3500),
+  annotations = c("**", "***", "ns")
+)
+
 IR_burden_SRP1141379_24hr <- ggplot() +
   geom_col(data = mean_Zhu_24hr, aes(x = conc_uM, y = mean_dir),
            fill = "#9E9E9E", colour = "black") +
@@ -2787,26 +2819,26 @@ IR_burden_SRP1141379_24hr <- ggplot() +
     data = mean_Zhu_24hr,
     aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
     width = 0.1) +
-  geom_signif(
-    comparisons = list(c("0", "3"), c("0", "10"), c("3", "10")),
-    annotations = c("**", "***", "ns"),   # Hours=24: p=0.0047, p=0.0001, p=0.5133
-    y_position  = c(3600, 4000, 3200),
-    tip_length  = 0.01,
-    textsize    = 4
-  ) +
+  geom_signif(data = sig_df_24hr,
+    aes(xmin = xmin, xmax = xmax, y_position = y_position, annotations = annotations),
+    manual = TRUE,
+    tip_length = 0.01,
+    textsize = 4) +
   theme_bw() +
   labs(
     y = "Intron retention events", 
     x = expression("CC-671 Concentration (" * mu * "M)")) +
-  scale_y_continuous(limits = c(0, 5000)) +
+  scale_y_continuous(limits = c(0, 5250)) +
   theme(panel.grid.major.x = element_blank(),
         text = element_text(size = 11),
         legend.text = element_text(size = 11),
         strip.text = element_text(size = 11),
         axis.title = element_text(size = 12),
-        title = element_text(size = 14),
+        title = element_text(size = 11),
         legend.title = element_blank(),
-        legend.position = "bottom")
+        legend.position = "right",
+        legend.margin = margin(t = 0, b = 0),       # trims padding above/below legend
+        legend.box.spacing = unit(0.2, "cm"))       # gap between plot panel and legend)
 
 IR_burden_SRP1141379_24hr
 
@@ -2820,7 +2852,7 @@ ir_ratio_zhu_24hours
 
 ir_volcano_plot_24hr_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_24hr, ir_volcano_plot_SRP141379_10uM_24hr, ncol = 2, labels = c("D", "G"))
 
-Zhu_24hours_ir <- ggarrange(IR_burden_SRP1141379_24hr, ir_ratio_zhu_24hours, ir_volcano_plot_24hr_SRP141379,  ncol = 1, heights = c(1, 2, 1), labels = c("A", ""))
+Zhu_24hours_ir <- ggarrange(IR_burden_SRP1141379_24hr, ir_ratio_zhu_24hours, ir_volcano_plot_24hr_SRP141379,  ncol = 1, heights = c(1, 2, 1), labels = c("A 24 hours", ""))
 Zhu_24hours_ir
 
 ggsave(Zhu_24hours_ir,
