@@ -16,6 +16,7 @@ library(clusterProfiler)
 library(org.Hs.eg.db) # Human annotation database
 library(readxl)
 source("ir_helpers.R")   # for make_ir_id()
+library(ggsignif)
 
 metadata_sc5903_mw <- read_csv("metadata_sc5903_mw.csv")
 metadata_sc5903_mw <- metadata_sc5903_mw |> 
@@ -23,6 +24,260 @@ metadata_sc5903_mw <- metadata_sc5903_mw |>
 ```
 
 # 1. Download data
+```{bash eval=FALSE}
+#!/usr/bin/env bash
+# =============================================================================
+# Master FASTQ download script
+# Studies: SRP112607 (4 runs), SRP141379 (128 runs), E-MTAB-14664 (6 runs)
+# Total: 138 runs — FTP paths are fetched live from ENA API at runtime
+# Resumable: re-run to skip completed files and resume partial transfers
+# Integrity-checked: gzip-tested after download, MD5 verified at the end
+# =============================================================================
+
+set -euo pipefail
+
+BASE_DIR="/data/moniquew/BrCa-Special-Topics/raw_data"
+LOG_DIR="/data/moniquew/BrCa-Special-Topics/logs"
+mkdir -p "$LOG_DIR"
+
+# =============================================================================
+# Core helpers
+# =============================================================================
+
+_is_complete() {
+  local f="$1"
+  [ -s "$f" ] || return 1
+  [ -f "$f.done" ] && [ ! "$f" -nt "$f.done" ] && return 0
+  case "$f" in
+  *.gz) gzip -t "$f" 2>/dev/null ;;
+*) return 0 ;;
+esac
+}
+
+_human() { numfmt --to=iec --suffix=B --format='%.1f' "$1" 2>/dev/null || echo "${1}B"; }
+
+_done_count=0
+_total_count=0
+
+download_one() {
+  local url="$1" out="$2" expected="${3:-0}"
+  _done_count=$((_done_count + 1))
+  local prefix="[$_done_count/$_total_count] $(basename $out)"
+  local sz=0
+  [ -f "$out" ] && sz=$(stat -c %s "$out" 2>/dev/null || echo 0)
+  local sz_msg=""
+  [ "$expected" -gt 0 ] && sz_msg=" ($(_human $sz) / $(_human $expected))"
+  printf '%s: checking%s... ' "$prefix" "$sz_msg" >&2
+  
+  if [ "$expected" -gt 0 ] && [ "$sz" -gt "$expected" ]; then
+  echo "oversized, redownloading" >&2
+  rm -f "$out" "$out.done"
+  elif _is_complete "$out"; then
+  : > "$out.done"
+  echo "valid, skip" >&2
+  return 0
+  elif [ "$sz" -gt 0 ]; then
+  echo "partial, resuming" >&2
+  rm -f "$out.done"
+  wget -c -q --show-progress --tries=10 --timeout=60 --retry-connrefused -O "$out" "$url" || true
+  if _is_complete "$out"; then
+  : > "$out.done"
+  echo "$prefix: resumed OK" >&2
+  return 0
+  fi
+  echo "$prefix: WARN integrity check failed after resume; redownloading from scratch" >&2
+  rm -f "$out" "$out.done"
+  else
+    echo "missing, downloading" >&2
+  rm -f "$out.done"
+  fi
+  
+  mkdir -p "${out%/*}"
+  wget -q --show-progress --tries=10 --timeout=60 --retry-connrefused -O "$out" "$url"
+  _is_complete "$out" || {
+    echo "$prefix: ERR corrupted after download (re-run script)" >&2
+    rm -f "$out" "$out.done"
+    return 1
+  }
+  : > "$out.done"
+  echo "$prefix: done" >&2
+}
+
+# Fetch FTP paths + MD5 + sizes from ENA API for a given accession
+# Prints: run_accession <TAB> ftp_url1;ftp_url2 <TAB> md5_1;md5_2 <TAB> bytes_1;bytes_2
+fetch_ena_info() {
+  local accession="$1"
+  curl -sS --retry 5 --retry-delay 3 \
+  "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=${accession}&result=read_run&fields=run_accession,fastq_ftp,fastq_md5,fastq_bytes&format=tsv" \
+  | tail -n +2   # strip header
+}
+
+# =============================================================================
+# Download one study worth of runs
+# Arguments: study_id  base_subdir  [list of run accessions...]
+# =============================================================================
+download_study() {
+  local study="$1"
+  local subdir="$2"
+  shift 2
+  local runs=("$@")
+  
+  echo ""
+  echo "============================================================"
+  echo "  Study: $study  (${#runs[@]} runs)"
+  echo "  Output: $BASE_DIR/$subdir"
+  echo "============================================================"
+  
+  # Collect all file info up front
+  declare -a all_urls all_outs all_sizes all_md5s
+  all_urls=(); all_outs=(); all_sizes=(); all_md5s=()
+  
+  echo "Querying ENA API for FTP paths..." >&2
+  for run in "${runs[@]}"; do
+  local info
+  info=$(fetch_ena_info "$run")
+  if [ -z "$info" ]; then
+  echo "WARN: No ENA data found for $run — skipping" >&2
+  continue
+  fi
+  
+  while IFS=$'\t' read -r run_acc ftp_urls md5s bytes; do
+  [ -z "$ftp_urls" ] && continue
+  IFS=';' read -ra urls  <<< "$ftp_urls"
+  IFS=';' read -ra mds   <<< "$md5s"
+  IFS=';' read -ra szs   <<< "$bytes"
+  for i in "${!urls[@]}"; do
+  local url="ftp://${urls[$i]}"
+  local fname; fname=$(basename "${urls[$i]}")
+  local out="$BASE_DIR/$subdir/$run_acc/$fname"
+  local sz="${szs[$i]:-0}"
+  local md="${mds[$i]:-}"
+  all_urls+=("$url")
+  all_outs+=("$out")
+  all_sizes+=("$sz")
+  all_md5s+=("$md  $out")
+  done
+  done <<< "$info"
+  done
+  
+  _total_count=${#all_urls[@]}
+    _done_count=0
+    
+    # Resume estimate
+    local present=0 local_bytes=0 total_bytes=0
+    for i in "${!all_outs[@]}"; do
+    local exp=${all_sizes[$i]:-0}
+    total_bytes=$((total_bytes + exp))
+    local f=${all_outs[$i]}
+    if [ -f "$f" ]; then
+    local sz; sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
+    [ "$sz" -gt "$exp" ] && sz=0
+    local_bytes=$((local_bytes + sz))
+    [ "$sz" -ge "$exp" ] && [ "$exp" -gt 0 ] && present=$((present + 1))
+    fi
+    done
+    local pct=$(( total_bytes > 0 ? local_bytes * 100 / total_bytes : 0 ))
+    echo "Resume estimate: $present/$_total_count files complete ($(_human $local_bytes) / $(_human $total_bytes) ≈ ${pct}%)."
+    
+    # Download
+    for i in "${!all_urls[@]}"; do
+    download_one "${all_urls[$i]}" "${all_outs[$i]}" "${all_sizes[$i]:-0}"
+    done
+    
+    # MD5 check
+    echo ""
+    echo "Verifying MD5 checksums for $study..."
+    local md5_input=""
+    for entry in "${all_md5s[@]}"; do
+    [ -n "$entry" ] && md5_input+="$entry"$'\n'
+    done
+    if [ -n "$md5_input" ]; then
+    echo "$md5_input" | md5sum -c --quiet && echo "All checksums OK for $study" || echo "WARN: Some checksums failed for $study — check above"
+    else
+      echo "No MD5s available to check for $study"
+    fi
+    
+    echo "Done: $study → $BASE_DIR/$subdir"
+  }
+  
+  # =============================================================================
+  # Study definitions — run accessions from metadata CSV
+  # =============================================================================
+  
+  # --- SRP112607 (4 runs, 4 experiments) ---
+  SRP112607_RUNS=(
+    SRR5833360
+    SRR5833361
+    SRR5833362
+    SRR5833363
+  )
+  
+  # --- SRP141379 (128 runs, 16 experiments) ---
+  SRP141379_RUNS=(
+    SRR7048256 SRR7048257 SRR7048258 SRR7048259
+    SRR7048260 SRR7048261 SRR7048262 SRR7048263
+    SRR7048264 SRR7048265 SRR7048266 SRR7048267
+    SRR7048268 SRR7048269 SRR7048270 SRR7048271
+    SRR7048272 SRR7048273 SRR7048274 SRR7048275
+    SRR7048276 SRR7048277 SRR7048278 SRR7048279
+    SRR7048280 SRR7048281 SRR7048282 SRR7048283
+    SRR7048284 SRR7048285 SRR7048286 SRR7048287
+    SRR7048288 SRR7048289 SRR7048290 SRR7048291
+    SRR7048292 SRR7048293 SRR7048294 SRR7048295
+    SRR7048296 SRR7048297 SRR7048298 SRR7048299
+    SRR7048300 SRR7048301 SRR7048302 SRR7048303
+    SRR7048304 SRR7048305 SRR7048306 SRR7048307
+    SRR7048308 SRR7048309 SRR7048310 SRR7048311
+    SRR7048312 SRR7048313 SRR7048314 SRR7048315
+    SRR7048316 SRR7048317 SRR7048318 SRR7048319
+    SRR7048320 SRR7048321 SRR7048322 SRR7048323
+    SRR7048324 SRR7048325 SRR7048326 SRR7048327
+    SRR7048328 SRR7048329 SRR7048330 SRR7048331
+    SRR7048332 SRR7048333 SRR7048334 SRR7048335
+    SRR7048336 SRR7048337 SRR7048338 SRR7048339
+    SRR7048340 SRR7048341 SRR7048342 SRR7048343
+    SRR7048344 SRR7048345 SRR7048346 SRR7048347
+    SRR7048348 SRR7048349 SRR7048350 SRR7048351
+    SRR7048352 SRR7048353 SRR7048354 SRR7048355
+    SRR7048356 SRR7048357 SRR7048358 SRR7048359
+    SRR7048360 SRR7048361 SRR7048362 SRR7048363
+    SRR7048364 SRR7048365 SRR7048366 SRR7048367
+    SRR7048368 SRR7048369 SRR7048370 SRR7048371
+    SRR7048372 SRR7048373 SRR7048374 SRR7048375
+    SRR7048376 SRR7048377 SRR7048378 SRR7048379
+    SRR7048380 SRR7048381 SRR7048382 SRR7048383
+  )
+  
+  # --- E-MTAB-14664 (6 runs) — already handled by download_ERP171667.sh ---
+  # Included here for completeness / in case you want one unified script.
+  # Comment this out if ERP171667 is already downloading separately.
+  EMTAB14664_RUNS=(
+    ERR14856082
+    ERR14856083
+    ERR14856084
+    ERR14856085
+    ERR14856086
+    ERR14856087
+  )
+  
+  # =============================================================================
+  # Run all studies sequentially
+  # =============================================================================
+  
+  echo "Starting downloads: $(date)"
+  echo "Output root: $BASE_DIR"
+  
+  download_study "SRP112607"   "SRP112607"   "${SRP112607_RUNS[@]}"
+  download_study "SRP141379"   "SRP141379"   "${SRP141379_RUNS[@]}"
+  download_study "E-MTAB-14664" "E-MTAB-14664/ERP171667" "${EMTAB14664_RUNS[@]}"
+  
+  echo ""
+  echo "============================================================"
+  echo "  All studies complete: $(date)"
+  echo "  Files saved under: $BASE_DIR"
+  echo "============================================================"
+```
+
 
 # 2. Fastqc data
 Aim: identify adaptors for trimming prior to running IRFinder.
@@ -31,6 +286,46 @@ Aim: identify adaptors for trimming prior to running IRFinder.
 # 3. Preparing data for IRFinder
 ## Trimming adaptors
 Used cutadapt to trim the 15bp adaptors from all samples
+```{bash eval=FALSE}
+# --- Create output directory ---
+#mkdir -p trimmed_data
+
+# --- Loop through all _1.fastq.gz files ---
+find /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/SRP112607/ /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/SRP141379/ /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/E-MTAB-14664/ \
+    -name "*_1.fastq.gz" ! -name "*.done" \
+    -type f | while read R1; do
+
+    # Derive the R2 filename by replacing _1.fastq.gz with _2.fastq.gz
+    R2="${R1/_1.fastq.gz/_2.fastq.gz}"
+
+    # Get the sample name (e.g. SRR5833363) from the filename
+    SAMPLE=$(basename "$R1" _1.fastq.gz)
+
+    # Define output filenames
+    R1_OUT="trimmed_data/${SAMPLE}_1_trimmed.fastq.gz"
+    R2_OUT="trimmed_data/${SAMPLE}_2_trimmed.fastq.gz"
+    R1_UNPAIRED="trimmed_data/${SAMPLE}_1_unpaired.fastq.gz"
+    R2_UNPAIRED="trimmed_data/${SAMPLE}_2_unpaired.fastq.gz"
+
+    echo "Trimming $SAMPLE: $(date)"
+
+    cutadapt \
+        -u 15 \
+        -U 15 \
+        -j 8 \
+        -o "$R1_OUT" \
+        -p "$R2_OUT" \
+        "$R1" \
+        "$R2"
+
+
+    echo "Done $SAMPLE: $(date)"
+
+done
+
+echo "Cutadapt pipeline finished: $(date)"
+```
+
 
 ## Merging lanes
 Zhu et al had samples spread across multiple lanes, and thus required merging
@@ -86,9 +381,89 @@ Met the criteria outlined in Shah et al. 2022.
 3.
 4.
 
+# Quick summary statistics
+
+## Intron retention events
+
+```{r}
+metadata_sc5903_mw |> summarise(
+  mean_intron = mean(sample_introns),
+  se_introns = sd(sample_introns) / sqrt(n()),
+  n_samples = n()
+)
+
+metadata_sc5903_mw |> 
+  group_by(Hours) |> 
+  summarise(
+  mean_intron = mean(sample_introns),
+  se_introns = sd(sample_introns) / sqrt(n()),
+  n_samples = n()
+)
+
+metadata_sc5903_mw |> 
+  group_by(Hours, exp_design) |> 
+  summarise(
+  mean_intron = mean(sample_introns),
+  se_introns = sd(sample_introns) / sqrt(n()),
+  n_samples = n()
+)
+```
+
+## Sequencing depth
+
+```{r}
+metadata_sc5903_mw |> summarise(
+  mean_depth = mean(`Sequencing depth (FASTQC)`),
+  se_depth = sd(`Sequencing depth (FASTQC)`) / sqrt(n()),
+  n_samples = n()
+)
+
+metadata_sc5903_mw |> 
+  group_by(Hours) |> 
+  summarise(
+  mean_depth = mean(`Sequencing depth (FASTQC)`),
+  se_depth = sd(`Sequencing depth (FASTQC)`) / sqrt(n()),
+  n_samples = n()
+)
+
+metadata_sc5903_mw |> 
+  group_by(Hours, exp_design) |> 
+  summarise(
+  mean_depth = mean(`Sequencing depth (FASTQC)`),
+  se_depth = sd(`Sequencing depth (FASTQC)`) / sqrt(n()),
+  n_samples = n()
+)
+```
+
+Mean IR ratio across introns within a sample
+
+```{r}
+metadata_sc5903_mw |> summarise(
+  mean_ir_ratio_all_introns = mean(mean_ir_ratio),
+  se_ir_ratio_all_introns = sd(mean_ir_ratio) / sqrt(n()),
+  n_samples = n()
+)
+
+metadata_sc5903_mw |> 
+  group_by(Hours) |> 
+  summarise(
+  mean_ir_ratio_all_introns = mean(mean_ir_ratio),
+  se_ir_ratio_all_introns = sd(mean_ir_ratio) / sqrt(n()),
+  n_samples = n()
+)
+
+metadata_sc5903_mw |> 
+  group_by(Hours, exp_design) |> 
+  summarise(
+  mean_ir_ratio_all_introns = mean(mean_ir_ratio),
+  se_ir_ratio_all_introns = sd(mean_ir_ratio) / sqrt(n()),
+  n_samples = n()
+)
+```
 
 
 # 6. Differential intron retention events (dIR)
+
 ```{r}
 # Split into the two studies
 Zhu <- metadata_sc5903_mw %>% filter(Citation == "Zhu et al. 2018")
@@ -105,7 +480,9 @@ delta_ir_srp_iwai <- read_tsv(
 )
 ```
 
+
 ## 6.1. Velde et al. 2026 (DMSO vs T025)
+
 ```{r import dIR data for Velde et al 2026}
 Velde_T025_vs_DMSO <- read_csv("results/ir/ERP171667/T025_vs_DMSO.csv")
 Velde_T025_vs_DMSO <- Velde_T025_vs_DMSO |>
@@ -122,6 +499,7 @@ Velde_T025_vs_DMSO <- Velde_T025_vs_DMSO |>
 erp_combined <- read_tsv(
   "results/ir/ERP171667_shah_filtered_combined.tsv",
   show_col_types = FALSE)
+#36626 observations, because it is all introns in all samples
 
 erp_combined <- erp_combined |>
   mutate(
@@ -129,8 +507,8 @@ erp_combined <- erp_combined |>
     IntronID  = make_ir_id(pick(everything()))   # Name|Chr|Start|End|Strand
   )
 # #sanity check
-# dim(erp_combined)
-# head(erp_combined)
+ dim(erp_combined)
+ head(erp_combined)
 
 # Delta IR
 delta_erp <- read_tsv(
@@ -149,12 +527,9 @@ delta_erp_filter <- delta_erp |> filter(delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 
 Summary (ERP171667):
 2559 introns that have a delta IR ratio of greater than or equal to |0.1|.
 
-
 ### Scatterplot
-Aim:
-Use the introns that have delta IR > absolute value of 0.1.
-Then do the the mean IR ratio against each other
-```{r eval=FALSE}
+Use the introns that have delta IR > absolute value of 0.1. Then compare the IR ratio in MB231 cells and those treated with T-025.
+```{r}
 erp_mean <- erp_combined |> 
   filter(IntronID %in% delta_erp_filter$IntronID) |> 
   #only including introns that passed the structural filtering,
@@ -175,104 +550,69 @@ erp_wide <- erp_mean %>%
 sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(baseMean > 10,
   padj < 0.01, 
   intron_id %in% delta_erp_filter$IntronID)
-#1452 intron IDs, and have a significant log2Fold Change of < 0.001 from DESeq
 #1618 dIR have a base expression of 10, FDR < 0.01, and a delta IR ratio greater than or equal to |0.1|
 erp_sig_wide <- erp_wide |> filter(IntronID %in% sig_dIR_erp$intron_id)
 
-ggplot() +
-  geom_point(data = erp_wide, aes(x = T025, y = DMSO), alpha = 0.4, size = 1) +
-  geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "blue", alpha = 0.4, size = 1)+
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+ERP171667_ir_ratio_delta_ir <- ggplot() +
+  geom_point(data = erp_wide, aes(x = T025, y = DMSO), alpha = 0.4, size = 0.5) +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  #geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "blue", alpha = 0.4, size = 1)+
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
-    x = "IR ratio - T025",
-    y = "IR ratio - DMSO",
-    title = "ERP171667"
-  ) +
-  theme_minimal()
+    x = "mean IR ratio - T-025",
+    y = "mean IR ratio - DMSO"
+  )
+ERP171667_ir_ratio_delta_ir_deseq_sig <- ggplot() +
+  #geom_point(data = erp_wide, aes(x = T025, y = DMSO), alpha = 0.4, size = 0.5) +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = "mean IR ratio - T-025",
+    y = "mean IR ratio - DMSO"
+  )
+
 ```
 
-Figure X. Scatterplot showing intron retention events that had a mean IR ratio of greater than 0.05 in at xx cells treated with DMSO or T025 after 24 hours. Intron retention events associated with significant dIR (p-adjust < 0.001) and delta IR ratio of > 0.1 or < -0.1 are shown in blue. dIR was tested using DESeq2.
+Figure X. Scatterplot showing intron retention events that had a mean IR ratio of greater than 0.05 in at xx cells treated with DMSO or T025 after 24 hours. Intron retention events associated with significant dIR (p-adjust < 0.01) and delta IR ratio of > 0.1 or < -0.1 are shown in blue. dIR was tested using DESeq2.
+
+```{r}
+library(dplyr)
+
+# For the full dataset
+erp_wide <- erp_wide %>%
+  mutate(
+    position = case_when(
+      DMSO > T025 + 0.1 ~ "above",
+      DMSO < T025 - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+table(erp_wide$position)
+# or
+erp_wide %>% count(position)
+
+# For the significant subset
+erp_sig_wide <- erp_sig_wide %>%
+  mutate(
+    position = case_when(
+      DMSO > T025 + 0.1 ~ "above",
+      DMSO < T025 - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+erp_sig_wide %>% count(position)
+```
 
 1618 introns that have a base expression of 10, FDR < 0.01, and a delta IR ratio greater than or equal to |0.1|.
-
-```{r volcano plot for dIR in velde et al. 2026, eval=FALSE}
-erp_mean <- erp_combined |>
-  mutate(
-    delta_ir_filter = case_when(
-      !IntronID %in% delta_erp_filter$IntronID ~ "Delta~IR~ratio<'|1|'",
-      IntronID %in% delta_erp_filter$IntronID  ~ "Delta~IR~ratio>='|1|'"
-    )
-  ) |>
-  group_by(IntronID, condition, delta_ir_filter) %>%
-  summarise(
-    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
-    .groups = "drop"
-  )
-  # filter(IntronID %in% delta_erp_filter$IntronID) |> 
-  #only including introns that passed the structural filtering,
-  #and have a delta IR ratio greater than or equal to |0.1|
-
-erp_wide <- erp_mean %>%
-  pivot_wider(
-    id_cols   = c(IntronID, delta_ir_filter),
-    names_from  = condition,
-    values_from =  mean_ir_ratio)
-# 6106 Introns.
-
-# using the same criteria as Li et al. 2025 Sci Reports)
-# padj (FDR) < 0.05
-# absolute fold charge >= 2
- sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(padj < 0.05, log2FoldChange <= -2 | log2FoldChange >= 2)
- # 4694 observations
-
-# sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(padj < 0.001, intron_id %in% delta_erp_filter$IntronID)
-# #1452 intron IDs, and have a significant log2Fold Change of < 0.001 from DESeq
-erp_sig_wide <- erp_wide |> filter(IntronID %in% sig_dIR_erp$intron_id)
-
-
-sig_delta_and_dir <- Velde_T025_vs_DMSO |> filter(padj < 0.05, log2FoldChange <= -2 | log2FoldChange >= 2, intron_id %in% delta_erp_filter$IntronID)
-# 1375 intron IDS
-erp_sig_delta_and_dir <- erp_wide |> filter(IntronID %in% sig_delta_and_dir$intron_id)
-
-ggplot() +
-  geom_point(data = erp_wide, aes(x = T025, y = DMSO), colour = "black", alpha = 0.2, size = 0.5) +
-  geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "pink", alpha = 0.2, size = 0.8)+
-  geom_point(data = erp_sig_delta_and_dir, aes(x = T025, y = DMSO), colour = "red", alpha = 0.2, size = 0.8)+
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#701705") +
-  labs(
-    x = "IR ratio - T025",
-    y = "IR ratio - DMSO",
-    title = "ERP171667"
-  ) +
-  theme_minimal()
-
-ggplot() +
-  #geom_point(data = erp_wide, aes(x = T025, y = DMSO), colour = "black", alpha = 0.2, size = 0.5) +
-  geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "pink", alpha = 0.2, size = 0.8)+
-  geom_point(data = erp_sig_delta_and_dir, aes(x = T025, y = DMSO), colour = "red", alpha = 0.2, size = 0.8)+
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#701705") +
-  labs(
-    x = "IR ratio - T025",
-    y = "IR ratio - DMSO",
-    title = "ERP171667"
-  ) +
-  theme_minimal()
-
-
-ggplot() +
-  geom_point(data = erp_wide, aes(x = T025, y = DMSO), colour = "black", alpha = 0.2, size = 0.5) +
-  # geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "pink", alpha = 0.2, size = 0.8)+
-  # geom_point(data = erp_sig_delta_and_dir, aes(x = T025, y = DMSO), colour = "red", alpha = 0.2, size = 0.8)+
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#701705") +
-  labs(
-    x = "IR ratio - T025",
-    y = "IR ratio - DMSO",
-    title = "ERP171667"
-  ) +
-  theme_minimal()
-```
-
-*note check with Ulf whether I should be filtering based on intron ID in deIR instead of the delta IR?*
 
 ### Intron retention events
 Aim: 
@@ -286,13 +626,11 @@ mean_Velde <- Velde |>
   )
 
 ERP171667_IR_burden <- ggplot() +
-  #geom_boxplot(data = Velde, aes(x = exp_design, y = n_introns)) +
-  geom_jitter(data = Velde, aes(x = conc_uM, y = sample_introns, colour = exp_design), width = 0.2) +
-  geom_point(data = mean_Velde, aes(x = conc_uM, y = mean_dir), size = 2) +
+  geom_col(data = mean_Velde, aes(x = conc_uM, y = mean_dir), fill = "#9E9E9E", colour = "black") +
+  geom_jitter(data = Velde, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
   geom_errorbar(
     data = mean_Velde,
     aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), width = 0.1)+
-  
   theme_bw()+
   labs(y = "Intron retention events",
        x = expression("T-025 Concentration (" * mu * "M)")#, title = "ERP171667"
@@ -306,8 +644,31 @@ ERP171667_IR_burden <- ggplot() +
         title = element_text(size = 14),
         legend.title = element_blank(),
         legend.position = c(0.95, 0.99),
-legend.justification = c("right", "top")
+        legend.justification = c("right", "top")
         )
+
+# ERP171667_IR_burden <- ggplot() +
+#   #geom_boxplot(data = Velde, aes(x = exp_design, y = n_introns)) +
+#   geom_jitter(data = Velde, aes(x = conc_uM, y = sample_introns, colour = exp_design), width = 0.2) +
+#   geom_point(data = mean_Velde, aes(x = conc_uM, y = mean_dir), size = 2) +
+#   geom_errorbar(
+#     data = mean_Velde,
+#     aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), width = 0.1)+
+#   theme_bw()+
+#   labs(y = "Intron retention events",
+#        x = expression("T-025 Concentration (" * mu * "M)")#, title = "ERP171667"
+#        )+
+#   scale_y_continuous(limits = c(0, 5000))+
+#   theme(panel.grid.major.x = element_blank(),
+#         text = element_text(size = 11),
+#         legend.text = element_text(size = 11),
+#         strip.text = element_text(size = 11),
+#         axis.title = element_text(size = 12),
+#         title = element_text(size = 14),
+#         legend.title = element_blank(),
+#         legend.position = c(0.95, 0.99),
+#         legend.justification = c("right", "top")
+#         )
 
 ggsave(filename = "ERP171667_IR_burden.PNG",
        plot = ERP171667_IR_burden,
@@ -316,6 +677,7 @@ ggsave(filename = "ERP171667_IR_burden.PNG",
        unit = "mm")
 
 ```
+
 Figure X. Number of intron retention events passing filtering criteria (structural criteria within samples, and  IR ratio > 0.05 in at least one group after intra-sample filtering). Error bars represent standard error of the mean. Coloured dot is the mean of the samples.
 
 ### Determine whether time or concentration drive difference in intron retention between control and treatment
@@ -463,8 +825,6 @@ ggplot()+
   labs(x = expression(Delta ~ "IR ratio (T-025/DMSO)"))+
   theme(panel.grid = element_blank(),
         panel.grid.major = element_blank())
-
-
 ```
 
 
@@ -549,53 +909,21 @@ mean_Zhu <- Zhu |> group_by(exp_design, Hours, conc_uM) |>
   summarise(
     mean_dir = mean(sample_introns),
     se_dir   = sd(sample_introns) / sqrt(n()),   # sd / sqrt(n)
-    .groups  = "drop"
-  )
+    .groups  = "drop")
 
 # Define labels for the facet
 hour_labels <- c(
   "6"  = "6 hours",
-  "24" = "24 hours"
-)
-
-ggplot() +
-  geom_jitter(data = Zhu, aes(x = conc_uM, y = sample_introns, , colour = exp_design), width = 0.2) +
-  geom_point(data = mean_Zhu, aes(x = conc_uM, y = mean_dir)) +
-  geom_errorbar(
-    data = mean_Zhu,
-    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
-    width = 0.1
-  ) +
-  facet_wrap(
-    ~ Hours, 
-    labeller = labeller(Hours = hour_labels)
-  ) +
-  theme_bw() +
-  labs(
-    y = "Intron retention events", 
-    colour = "",
-    x = expression("CC-671 Concentration (" * mu * "M)")
-  ) +
-  scale_y_continuous(limits = c(0, 5000))+
-  theme(panel.grid.major.x = element_blank(),
-        text = element_text(size = 11),
-        legend.text = element_text(size = 11),
-        strip.text = element_text(size = 11),
-        axis.title = element_text(size = 12),
-        title = element_text(size = 14),
-        legend.title = element_blank(),
-        legend.position = c(0.98, 0.99),
-legend.justification = c("right", "top")
-        )
+  "24" = "24 hours")
 
 IR_burden_SRP1141379 <- ggplot() +
-  geom_jitter(data = Zhu, aes(x = conc_uM, y = sample_introns, , colour = exp_design), width = 0.2) +
-  geom_point(data = mean_Zhu, aes(x = conc_uM, y = mean_dir)) +
+  geom_col(data = mean_Zhu, aes(x = conc_uM, y = mean_dir),
+           fill = "#9E9E9E", colour = "black") +
+  geom_jitter(data = Zhu, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
   geom_errorbar(
     data = mean_Zhu,
     aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
-    width = 0.1
-  ) +
+    width = 0.1) +
   facet_wrap(
     ~ Hours, 
     labeller = labeller(Hours = hour_labels)
@@ -603,9 +931,7 @@ IR_burden_SRP1141379 <- ggplot() +
   theme_bw() +
   labs(
     y = "Intron retention events", 
-    colour = "",
-    x = expression("CC-671 Concentration (" * mu * "M)") #, title = "SRP1141379"
-  ) +
+    x = expression("CC-671 Concentration (" * mu * "M)")) +
   scale_y_continuous(limits = c(0, 5000))+
   theme(panel.grid.major.x = element_blank(),
         text = element_text(size = 11),
@@ -615,8 +941,37 @@ IR_burden_SRP1141379 <- ggplot() +
         title = element_text(size = 14),
         legend.title = element_blank(),
         legend.position = c(0.98, 0.99),
-legend.justification = c("right", "top")
-        )
+legend.justification = c("right", "top"))
+
+# IR_burden_SRP1141379 <- ggplot() +
+#   geom_jitter(data = Zhu, aes(x = conc_uM, y = sample_introns, , colour = exp_design), width = 0.2) +
+#   geom_point(data = mean_Zhu, aes(x = conc_uM, y = mean_dir)) +
+#   geom_errorbar(
+#     data = mean_Zhu,
+#     aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
+#     width = 0.1
+#   ) +
+#   facet_wrap(
+#     ~ Hours, 
+#     labeller = labeller(Hours = hour_labels)
+#   ) +
+#   theme_bw() +
+#   labs(
+#     y = "Intron retention events", 
+#     colour = "",
+#     x = expression("CC-671 Concentration (" * mu * "M)") #, title = "SRP1141379"
+#   ) +
+#   scale_y_continuous(limits = c(0, 5000))+
+#   theme(panel.grid.major.x = element_blank(),
+#         text = element_text(size = 11),
+#         legend.text = element_text(size = 11),
+#         strip.text = element_text(size = 11),
+#         axis.title = element_text(size = 12),
+#         title = element_text(size = 14),
+#         legend.title = element_blank(),
+#         legend.position = c(0.98, 0.99),
+# legend.justification = c("right", "top")
+#         )
   
 ggsave(filename = "SRP1141379_IR_burden.PNG",
          plot = IR_burden_SRP1141379,
@@ -626,6 +981,11 @@ ggsave(filename = "SRP1141379_IR_burden.PNG",
 
 
 ### Scatterplots of IR ratio
+```{r}
+dIR_6hrs_CC671_3uM_vs_DMSO <- read_csv("results/ir/SRP141379/6hr/CC671_3uM_vs_DMSO.csv") |> 
+  mutate(intron_id = `...1`)
+```
+
 
 #### CC671 3uM @ 6 hours
 ```{r}
@@ -641,39 +1001,84 @@ zhu_mean_6hr_3uM <- srp_combined |>
     mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
     mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
     .groups = "drop")
-# zhu_mean_6hr_3uM <- srp_combined |> filter(IntronID %in% delta_zhu_6hr_3uM_filter$IntronID) |>
-#   group_by(IntronID, condition) %>%
-#   summarise(
-#     mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
-#     mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
-#     .groups = "drop"
-#   )
 
 zhu_wide_6hr_3uM <- zhu_mean_6hr_3uM %>%
   pivot_wider(
     id_cols   = IntronID,
     names_from  = condition,
-    values_from =  mean_ir_ratio
-  )
+    values_from =  mean_ir_ratio)
 
-ir_ratio_zhu.1 <- ggplot(zhu_wide_6hr_3uM, aes(x = CC671_3uM, y = DMSO)) +
-  geom_point(alpha = 0.4, size = 1) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+sig_dIR_zhu_6hr_3um <- dIR_6hrs_CC671_3uM_vs_DMSO |> 
+  filter(baseMean > 10,
+  padj < 0.01, 
+  intron_id %in% delta_zhu_6hr_3uM_filter$IntronID)
+
+zhu_wide_6hr_3uM_sig <- zhu_wide_6hr_3uM |> filter(IntronID %in% sig_dIR_zhu_6hr_3um$intron_id)
+
+ir_ratio_zhu.1 <- ggplot() +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  geom_point(data = zhu_wide_6hr_3uM, aes(x = CC671_3uM, y = DMSO), colour = "black", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
-    x = "IR ratio - CC671 3uM",
-    y = "IR ratio - DMSO",
-    title = "6 hours"
-  ) +
-  theme_minimal()
+    x = expression("mean IR ratio (CC671 3" * mu * "M)"),
+    y = "mean IR ratio (DMSO)",
+    title = "6 hours" )
 
 ir_ratio_zhu.1
+
+ir_ratio_zhu.1_sig <- ggplot() +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  geom_point(data = zhu_wide_6hr_3uM_sig, aes(x = CC671_3uM, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = expression("mean IR ratio (CC671 3" * mu * "M)"),
+    y = "mean IR ratio (DMSO)")
+
+ir_ratio_zhu.1_sig
+
+
+
 ```
 
+```{r}
+library(dplyr)
 
+# All points (zhu_wide_6hr_3uM)
+zhu_wide_6hr_3uM <- zhu_wide_6hr_3uM %>%
+  mutate(
+    position = case_when(
+      DMSO > CC671_3uM + 0.1 ~ "above",
+      DMSO < CC671_3uM - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+zhu_wide_6hr_3uM %>% count(position)
+
+# Significant subset (zhu_wide_6hr_3uM_sig)
+zhu_wide_6hr_3uM_sig <- zhu_wide_6hr_3uM_sig %>%
+  mutate(
+    position = case_when(
+      DMSO > CC671_3uM + 0.1 ~ "above",
+      DMSO < CC671_3uM - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+zhu_wide_6hr_3uM_sig %>% count(position)
+```
 
 
 #### CC671 10uM @ 6 hours
 ```{r}
+dIR_6hrs_CC671_10uM_vs_DMSO <- read_csv("results/ir/SRP141379/6hr/CC671_10uM_vs_DMSO.csv") |> 
+  mutate(intron_id = `...1`)
 # 6 hours, 10uM
 delta_zhu_6hr_10uM_filter <- delta_ir_srp_zhu |> filter(hours == 6, delta_mean_ir_ratio_CC671_10uM_vs_DMSO != "NA" & # 8548 introns
                                                           delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1) #2215 introns
@@ -690,25 +1095,88 @@ zhu_wide_6hr_10uM <- zhu_mean_6hr_10uM %>%
   pivot_wider(
     id_cols   = IntronID,
     names_from  = condition,
-    values_from =  mean_ir_ratio
-  )
+    values_from =  mean_ir_ratio  )
 
-ir_ratio_zhu.2 <- ggplot(zhu_wide_6hr_10uM, aes(x = CC671_10uM, y = DMSO)) +
-  geom_point(alpha = 0.4, size = 1) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+sig_dIR_zhu_6hr_10um <- dIR_6hrs_CC671_10uM_vs_DMSO |> 
+  filter(baseMean > 10,
+  padj < 0.01, 
+  intron_id %in% delta_zhu_6hr_10uM_filter$IntronID)
+
+zhu_wide_6hr_10uM_sig <- zhu_wide_6hr_10uM |> filter(IntronID %in% sig_dIR_zhu_6hr_10um$intron_id)
+
+
+zhu_mean_6hr_10uM <- srp_combined |>
+  filter(IntronID %in% delta_zhu_6hr_10uM_filter$IntronID, hours == 6) |>
+  group_by(IntronID, condition) |>
+  summarise(
+    mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
+    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    .groups = "drop")
+
+ir_ratio_zhu.2 <- ggplot() +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank()) +
+  geom_point(data = zhu_wide_6hr_10uM, aes(x = CC671_10uM, y = DMSO), colour = "black", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1) +
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1) +
   labs(
-    x = "IR ratio - CC671 10uM",
-    y = "IR ratio - DMSO",
-    title = "6 hours"
-  ) +
-  theme_minimal()
+    x = expression("mean IR ratio (CC671 10" * mu * "M)"),
+    y = "mean IR ratio (DMSO)",
+    title = "6 hours")
 
 ir_ratio_zhu.2
+
+
+ir_ratio_zhu.2_sig <- ggplot() +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank()) +
+  geom_point(data = zhu_wide_6hr_10uM_sig, aes(x = CC671_10uM, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1) +
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1) +
+  labs(
+    x = expression("mean IR ratio (CC671 10" * mu * "M)"),
+    y = "mean IR ratio (DMSO)")
+
+ir_ratio_zhu.2_sig
 ```
+
+```{r}
+library(dplyr)
+
+# All points (zhu_wide_6hr_3uM)
+zhu_wide_6hr_10uM <- zhu_wide_6hr_10uM %>%
+  mutate(
+    position = case_when(
+      DMSO > CC671_10uM + 0.1 ~ "above",
+      DMSO < CC671_10uM - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+zhu_wide_6hr_10uM %>% count(position)
+
+# Significant subset (zhu_wide_6hr_3uM_sig)
+zhu_wide_6hr_10uM_sig <- zhu_wide_6hr_10uM_sig %>%
+  mutate(
+    position = case_when(
+      DMSO > CC671_10uM + 0.1 ~ "above",
+      DMSO < CC671_10uM - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+zhu_wide_6hr_10uM_sig %>% count(position)
+```
+
+
 
 #### CC671 3uM @ 24 hours
 
 ```{r}
+dIR_24hrs_CC671_3uM_vs_DMSO <- read_csv("results/ir/SRP141379/24hr/CC671_3uM_vs_DMSO.csv") |> 
+  mutate(intron_id = `...1`)
 # 24 hours, 3uM
 delta_zhu_24hr_3uM_filter <- delta_ir_srp_zhu |> filter(hours == 24,
                                                        delta_mean_ir_ratio_CC671_3uM_vs_DMSO != "NA" & #9302 introns present in both groups
@@ -729,23 +1197,73 @@ zhu_wide_24hr_3uM <- zhu_mean_24hr_3uM %>%
     values_from =  mean_ir_ratio
   )
 
-ir_ratio_zhu.3 <- ggplot(zhu_wide_24hr_3uM, aes(x = CC671_3uM, y = DMSO)) +
-  geom_point(alpha = 0.4, size = 1) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+sig_dIR_zhu_24hr_3um <- dIR_24hrs_CC671_3uM_vs_DMSO |> 
+  filter(baseMean > 10,
+  padj < 0.01, 
+  intron_id %in% delta_zhu_24hr_3uM_filter$IntronID)
+
+zhu_wide_24hr_3uM_sig <- zhu_wide_24hr_3uM |> filter(IntronID %in% sig_dIR_zhu_24hr_3um$intron_id)
+
+ir_ratio_zhu.3 <- ggplot() +
+  geom_point(data = zhu_wide_24hr_3uM, aes(x = CC671_3uM, y = DMSO), colour = "black", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
-    x = "IR ratio - CC671 3uM",
-    y = "IR ratio - DMSO",
-    title = "24 hours"
-  ) +
-  theme_minimal()
+    x = expression("mean IR ratio (CC671 3" * mu * "M)"),
+    y = "mean IR ratio (DMSO)") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())
 
 ir_ratio_zhu.3
+
+ir_ratio_zhu.3_sig <- ggplot() +
+  geom_point(data = zhu_wide_24hr_3uM_sig, aes(x = CC671_3uM, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = expression("mean IR ratio (CC671 3" * mu * "M)"),
+    y = "mean IR ratio (DMSO)") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())
+
+ir_ratio_zhu.3_sig
 ```
 
+```{r}
+library(dplyr)
+
+# All points (zhu_wide_6hr_3uM)
+zhu_wide_24hr_3uM <- zhu_wide_24hr_3uM %>%
+  mutate(
+    position = case_when(
+      DMSO > CC671_3uM + 0.1 ~ "above",
+      DMSO < CC671_3uM - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+zhu_wide_24hr_3uM %>% count(position)
+
+# Significant subset (zhu_wide_6hr_3uM_sig)
+zhu_wide_24hr_3uM_sig <- zhu_wide_24hr_3uM_sig %>%
+  mutate(
+    position = case_when(
+      DMSO > CC671_3uM + 0.1 ~ "above",
+      DMSO < CC671_3uM - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+zhu_wide_24hr_3uM_sig %>% count(position)
+```
 
 #### CC671 10uM @ 24 hours
 
 ```{r}
+dIR_24hrs_CC671_10uM_vs_DMSO <- read_csv("results/ir/SRP141379/24hr/CC671_10uM_vs_DMSO.csv") |> 
+  mutate(intron_id = `...1`)
 # 24 hours, 10um
 delta_zhu_24hr_10uM_filter <- delta_ir_srp_zhu |> filter(hours == 24, delta_mean_ir_ratio_CC671_10uM_vs_DMSO != "NA" & # 9288 differentially expressed
                                                  delta_mean_ir_ratio_CC671_10uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1) # 1069 introns         
@@ -763,28 +1281,74 @@ zhu_wide_24hr_10uM <- zhu_mean_24hr_10uM %>%
   pivot_wider(
     id_cols   = IntronID,
     names_from  = condition,
-    values_from =  mean_ir_ratio
-  )
+    values_from =  mean_ir_ratio)
 
-ir_ratio_zhu.4 <- ggplot(zhu_wide_24hr_10uM, aes(x = CC671_10uM, y = DMSO)) +
-  geom_point(alpha = 0.4, size = 1) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+sig_dIR_zhu_24hr_10um <- dIR_24hrs_CC671_10uM_vs_DMSO |> 
+  filter(baseMean > 10,
+  padj < 0.01, 
+  intron_id %in% delta_zhu_24hr_10uM_filter$IntronID)
+
+zhu_wide_24hr_10uM_sig <- zhu_wide_24hr_10uM |> filter(IntronID %in% sig_dIR_zhu_24hr_10um$intron_id)
+
+ir_ratio_zhu.4 <- ggplot() +
+  geom_point(data = zhu_wide_24hr_10uM, aes(x = CC671_3uM, y = DMSO), colour = "black", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
-    x = "IR ratio - CC671 10uM",
-    y = "IR ratio - DMSO",
-    title = "24 hours"
-  ) +
-  theme_minimal()
+    x = expression("mean IR ratio (CC671 10" * mu * "M)"),
+    y = "mean IR ratio (DMSO)") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())
 
 ir_ratio_zhu.4
+
+ir_ratio_zhu.4_sig <- ggplot() +
+  geom_point(data = zhu_wide_24hr_10uM_sig, aes(x = CC671_3uM, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = expression("mean IR ratio (CC671 10" * mu * "M)"),
+    y = "mean IR ratio (DMSO)") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank()) 
+
+ir_ratio_zhu.4_sig
+```
+
+```{r}
+library(dplyr)
+
+# All points (zhu_wide_6hr_3uM)
+zhu_wide_24hr_10uM <- zhu_wide_24hr_10uM %>%
+  mutate(
+    position = case_when(
+      DMSO > CC671_10uM + 0.1 ~ "above",
+      DMSO < CC671_10uM - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+zhu_wide_24hr_10uM %>% count(position)
+
+# Significant subset (zhu_wide_6hr_3uM_sig)
+zhu_wide_24hr_10uM_sig <- zhu_wide_24hr_10uM_sig %>%
+  mutate(
+    position = case_when(
+      DMSO > CC671_10uM + 0.1 ~ "above",
+      DMSO < CC671_10uM - 0.1 ~ "below",
+      TRUE ~ "within"
+    )
+  )
+
+zhu_wide_24hr_10uM_sig %>% count(position)
 ```
 
 ### Determine whether time or concentration drive difference in intron retention between control and treatment
 ```{r}
 library(glmmTMB)
-
 # Treat Hours and Concentration as factors if you only have a few discrete levels 
-
 # (e.g. 0h/6h/24h, or Low/Med/High). Keep as numeric only if truly continuous/dose-response.
 Zhu$Hours <- factor(Zhu$Hours)
 Zhu$Concentration <- factor(Zhu$Concentration)
@@ -796,14 +1360,15 @@ table(Zhu$group, Zhu$Hours)
 model <- glmmTMB(
   sample_introns ~ group * Hours,
   family = nbinom2,
-  data = Zhu
-)
+  data = Zhu)
 
 summary(model)
 drop1(model, test = "Chisq")
 
 library(emmeans)
 emmeans(model, pairwise ~ group | Hours, type = "response")
+emmeans(model, pairwise ~ Hours | group, type = "response")
+
 ```
 
 ### Volcano plot
@@ -845,8 +1410,7 @@ ir_volcano_plot_SRP141379_3uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_rat
   geom_hline(yintercept = -log10(0.01), linetype = "dashed", alpha = 0.7, colour = "black",size = 0.5)+
   scale_x_continuous(limits = c(-1, 1)) +
   theme(panel.grid = element_blank())+
-  labs(title = "6 hours",
-       x = expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)"))
+  labs( x = expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)"))
 ```
 
 ```{r}
@@ -969,8 +1533,7 @@ ir_volcano_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ra
   theme_bw()+
   scale_x_continuous(limits = c(-1, 1)) +
   theme(panel.grid = element_blank())+
-  labs(title = "24 hours",
-       x= expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)"))
+  labs(x= expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)"))
 
 # Delta IR a d log2Fold
 ir_l2fc_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO,
@@ -1104,14 +1667,26 @@ ggplot() +
 
 
 ggplot() +
-  #geom_boxplot(data = Velde, aes(x = exp_design, y = n_introns)) +
-  geom_point(data = Iwai, aes(x = conc_uM, y = sample_introns, colour = exp_design), size = 3) +
-  theme_bw()+
-  labs(y = "Intron retention events", colour = "",
-       x = expression("T-025 Concentration (" * mu * "M)") #title = "SRP112607"
-       )+
-  scale_y_continuous(limits = c(0, 8500))+
-  theme(panel.grid.major.x = element_blank())
+  geom_col(data = Iwai, aes(x = conc_uM, y = sample_introns),
+           fill = "#9E9E9E", colour = "black") +
+  # geom_jitter(data = Iwai, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
+  # geom_errorbar(
+  #   data = mean_iwai,
+  #   aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
+  #   width = 0.1
+  # ) +
+  theme_bw() +
+  labs(
+    y = "Intron retention events", 
+    x = expression("T-025 Concentration (" * mu * "M)")
+  ) +
+  scale_y_continuous(limits = c(0, 8250))+
+  theme(panel.grid.major.x = element_blank(),
+        text = element_text(size = 11),
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        axis.title = element_text(size = 12),
+        title = element_text(size = 14))
 
 ```
 
@@ -1949,7 +2524,33 @@ shared_all_df |> filter(is.na(symbol_final))
 
 
 # 10. Plots for report
+## Liu et al. 2025 Introns
 ```{r}
+ERP171667_ir_ratio_delta_ir <- ggplot() +
+  geom_point(data = erp_wide, aes(x = T025, y = DMSO), alpha = 0.4, size = 0.5) +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  #geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "blue", alpha = 0.4, size = 1)+
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = "mean IR ratio - T-025",
+    y = "mean IR ratio - DMSO"
+  )
+ERP171667_ir_ratio_delta_ir_deseq_sig <- ggplot() +
+  #geom_point(data = erp_wide, aes(x = T025, y = DMSO), alpha = 0.4, size = 0.5) +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = "mean IR ratio - T-025",
+    y = "mean IR ratio - DMSO"
+  )
+
 # merge delta IR and the dIR data
 volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
 
@@ -1981,64 +2582,70 @@ ir_volcano_plot_ERP171667 <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_
         panel.grid.major = element_blank())+
   labs(x = expression(Delta ~ "IR ratio (T-025 1" * mu * "M/DMSO)"))
 
-erp_delta_ir_ratio_log2Fold <- left_join(
-  Velde_T025_vs_DMSO, delta_erp,
-  by = join_by(intron_id == IntronID)
-) |>
-  mutate(
-    meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
-                  delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
-    significance = case_when(
-      meets_delta & padj < 0.01 ~ "#701705",
-      TRUE                      ~ "#a3a8ac"
-    ))
+ERP171667_ir_ratio <- ggarrange(ERP171667_ir_ratio_delta_ir, ERP171667_ir_ratio_delta_ir_deseq_sig, ncol = 1, labels = c("B", "C"))
 
-ir_l2fc_plot_ERP171667 <- ggplot() +
-  theme_bw() +
-  geom_point(
-    data = erp_delta_ir_ratio_log2Fold,
-    aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = log2FoldChange, color = significance),
-    size = 0.6) +
-  geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  scale_color_identity() +
-  labs(x = expression(Delta ~ "IR ratio (T-025 1" * mu * "M/DMSO)")) +
-  theme(panel.grid = element_blank(),
-        panel.grid.major = element_blank())
+# erp_delta_ir_ratio_log2Fold <- left_join(
+#   Velde_T025_vs_DMSO, delta_erp,
+#   by = join_by(intron_id == IntronID)
+# ) |>
+#   mutate(
+#     meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
+#                   delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
+#     significance = case_when(
+#       meets_delta & padj < 0.01 ~ "#701705",
+#       TRUE                      ~ "#a3a8ac"
+#     ))
+# 
+# ir_l2fc_plot_ERP171667 <- ggplot() +
+#   theme_bw() +
+#   geom_point(
+#     data = erp_delta_ir_ratio_log2Fold,
+#     aes(x = delta_mean_ir_ratio_T025_vs_DMSO, y = log2FoldChange, color = significance),
+#     size = 0.6) +
+#   geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
+#   geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
+#   scale_color_identity() +
+#   labs(x = expression(Delta ~ "IR ratio (T-025 1" * mu * "M/DMSO)")) +
+#   theme(panel.grid = element_blank(),
+        # panel.grid.major = element_blank())
 
-ERP171667_volc_l2fc <- ggarrange(ir_volcano_plot_ERP171667, ir_l2fc_plot_ERP171667, labels = c("B", "C"), ncol = 1)
+#ERP171667_volc_l2fc <- ggarrange(ir_volcano_plot_ERP171667, ir_l2fc_plot_ERP171667, labels = c("B", "C"), ncol = 1)
 
-ERP_ir_plot1 <- ggarrange(ERP171667_IR_burden, ERP171667_volc_l2fc, labels = c("A", ""), ncol = 2, widths = c(1, 0.8))
 
-dEG_T025_vs_DMSO <- read_csv("results/genes/ERP171667/T025_vs_DMSO.csv") 
-dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> mutate("EnsemblID" = ...1)
 
-dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
-  mutate(
-    significance = case_when(
-      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
-      (log2FoldChange >= 3 | log2FoldChange <= -3)  ~ "#701705",
-      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
-      TRUE                       ~ "#a3a8ac"))
+ERP_ir_plot1 <- ggarrange(ERP171667_IR_burden, ERP171667_ir_ratio, labels = c("A", ""), ncol = 2, widths = c(1, 0.8))
 
-dEG_T025_vs_DMSO |> group_by(significance) |> summarise(n_genes = n())
+ERP_ir_plot <- ggarrange(ERP_ir_plot1, ir_volcano_plot_ERP171667, ncol =1, heights = c(1.5, 0.7), labels = c("", "D"))
 
-volc_data <- dEG_T025_vs_DMSO |>
-  filter(baseMean > 10) |>
-  as.data.frame() |>
-  na.omit()
-
-deg_ERP171667_plot <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
-  geom_point(size = 0.6) +
-  scale_colour_identity() +
-  geom_vline(xintercept = -3, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_vline(xintercept = 3, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_hline(yintercept = -log10(0.01), linetype = "dashed", alpha = 0.7, colour = "black",size = 0.5)+
-  theme_bw()+
-  labs(x = expression("Gene log2FoldChange (T-025 1" * mu * "M/DMSO)")) +
-  theme(panel.grid = element_blank())
-
-ERP_ir_plot <- ggarrange(ERP_ir_plot1, deg_ERP171667_plot, ncol =1,heights = c(1.5, 0.7), labels = c("", "D"))
+# dEG_T025_vs_DMSO <- read_csv("results/genes/ERP171667/T025_vs_DMSO.csv") 
+# dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> mutate("EnsemblID" = ...1)
+# 
+# dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
+#   mutate(
+#     significance = case_when(
+#       #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
+#       (log2FoldChange >= 3 | log2FoldChange <= -3)  ~ "#701705",
+#       #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
+#       TRUE                       ~ "#a3a8ac"))
+# 
+# dEG_T025_vs_DMSO |> group_by(significance) |> summarise(n_genes = n())
+# 
+# volc_data <- dEG_T025_vs_DMSO |>
+#   filter(baseMean > 10) |>
+#   as.data.frame() |>
+#   na.omit()
+# 
+# deg_ERP171667_plot <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj), colour = significance)) +
+#   geom_point(size = 0.6) +
+#   scale_colour_identity() +
+#   geom_vline(xintercept = -3, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
+#   geom_vline(xintercept = 3, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
+#   geom_hline(yintercept = -log10(0.01), linetype = "dashed", alpha = 0.7, colour = "black",size = 0.5)+
+#   theme_bw()+
+#   labs(x = expression("Gene log2FoldChange (T-025 1" * mu * "M/DMSO)")) +
+#   theme(panel.grid = element_blank())
+# 
+# ERP_ir_plot <- ggarrange(ERP_ir_plot1, deg_ERP171667_plot, ncol =1,heights = c(1.5, 0.7), labels = c("", "D"))
 
 ggsave(filename = "ERP171667_ir_plot.PNG",
        plot = ERP_ir_plot,
@@ -2046,27 +2653,197 @@ ggsave(filename = "ERP171667_ir_plot.PNG",
        height = 200,
        unit = "mm")
 
-ggsave(filename = "ERP171667_ir_plot1.PNG",
-       plot = ERP_ir_plot1,
+ggsave(filename = "ERP171667_ir_plot.PDF",
+       plot = ERP_ir_plot,
        width = 180,
-       height = 160,
+       height = 200,
        unit = "mm")
 
+# ggsave(filename = "ERP171667_ir_plot1.PNG",
+#        plot = ERP_ir_plot1,
+#        width = 180,
+#        height = 160,
+#        unit = "mm")
+
 ```
+
+## Zhu et al Introns
+### 6 hours
+```{r}
+mean_Zhu <- Zhu |> group_by(exp_design, Hours, conc_uM) |> 
+  summarise(
+    mean_dir = mean(sample_introns),
+    se_dir   = sd(sample_introns) / sqrt(n()),   # sd / sqrt(n)
+    .groups  = "drop")
+
+# Define labels for the facet
+hour_labels <- c(
+  "6"  = "6 hours",
+  "24" = "24 hours")
+
+mean_Zhu_6hr <- mean_Zhu |> filter(Hours == 6)
+Zhu_6hr <- Zhu |> filter(Hours == 6)
+
+IR_burden_SRP1141379_6hr <- ggplot() +
+  geom_col(data = mean_Zhu_6hr, aes(x = conc_uM, y = mean_dir),
+           fill = "#9E9E9E", colour = "black") +
+  geom_jitter(data = Zhu_6hr, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
+  geom_errorbar(
+    data = mean_Zhu_6hr,
+    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
+    width = 0.1) +
+  theme_bw() +
+  labs(
+    y = "Intron retention events", 
+    x = expression("CC-671 Concentration (" * mu * "M)")) +
+  scale_y_continuous(limits = c(0, 5000))+
+  theme(panel.grid.major.x = element_blank(),
+        text = element_text(size = 11),
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        axis.title = element_text(size = 12),
+        title = element_text(size = 14),
+        legend.title = element_blank(),
+        legend.position = c(0.05, 0.99),
+legend.justification = c("left", "top"))
+
+IR_burden_SRP1141379_6hr
+
+```
+
+```{r}
+ir_ratio_zhu_6hours <- ggarrange(ir_ratio_zhu.1, ir_ratio_zhu.2, ir_ratio_zhu.1_sig,  ir_ratio_zhu.2_sig, ncol = 2, nrow = 2, labels =c("B", "E", "C", "F"))
+
+ir_ratio_zhu_6hours
+
+ir_volcano_plot_6hr_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_6hr, ir_volcano_plot_SRP141379_10uM_6hr, ncol = 2, labels = c("D", "G"))
+
+Zhu_6hours_ir <- ggarrange(IR_burden_SRP1141379_6hr, ir_ratio_zhu_6hours, ir_volcano_plot_6hr_SRP141379,  ncol = 1, heights = c(1, 2, 1), labels = c("A", ""))
+Zhu_6hours_ir
+
+ggsave(Zhu_6hours_ir,
+       filename = "Zhu_6hours_ir.PDF",
+       height = 280,
+       width = 180,
+       units = "mm")
+```
+
+
+```{r}
+ir_volcano_plot_full_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_6hr, ir_volcano_plot_SRP141379_3uM_24hr, ir_volcano_plot_SRP141379_10uM_6hr, ir_volcano_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("B", "C", "", ""))
+
+# ir_l2fc_plot_full_SRP141379 <- ggpubr::ggarrange(ir_l2fc_plot_SRP141379_3uM_6hr, ir_l2fc_plot_SRP141379_3uM_24hr, ir_l2fc_plot_SRP141379_10uM_6hr, ir_l2fc_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("D", "E", "", ""))
+
+SRP141379_ir_burden_volcano <- ggarrange(IR_burden_SRP1141379, ir_volcano_plot_full_SRP141379, ir_l2fc_plot_full_SRP141379, ncol = 1, heights = c(1, 1.2, 1.2), labels = c("A", "", ""))
+
+ggsave(SRP141379_ir_burden_volcano,
+       filename = "SRP141379_ir_burden_volcano.png",
+       height = 280,
+       width = 180,
+       units = "mm")
+```
+
+### 24 hours
+```{r}
+# Define labels for the facet
+hour_labels <- c(
+  "6"  = "6 hours",
+  "24" = "24 hours")
+
+mean_Zhu_24hr <- mean_Zhu |> filter(Hours == 24)
+Zhu_24hr <- Zhu |> filter(Hours == 24)
+
+IR_burden_SRP1141379_24hr <- ggplot() +
+  geom_col(data = mean_Zhu_24hr, aes(x = conc_uM, y = mean_dir),
+           fill = "#9E9E9E", colour = "black") +
+  geom_jitter(data = Zhu_24hr, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
+  geom_errorbar(
+    data = mean_Zhu_24hr,
+    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
+    width = 0.1) +
+  theme_bw() +
+  labs(
+    y = "Intron retention events", 
+    x = expression("CC-671 Concentration (" * mu * "M)")) +
+  scale_y_continuous(limits = c(0, 5000))+
+  theme(panel.grid.major.x = element_blank(),
+        text = element_text(size = 11),
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        axis.title = element_text(size = 12),
+        title = element_text(size = 14),
+        legend.title = element_blank(),
+        legend.position = c(0.05, 0.99),
+legend.justification = c("left", "top"))
+
+mean_Zhu_24hr <- mean_Zhu |> filter(Hours == 24) |> mutate(conc_uM = factor(conc_uM))
+Zhu_24hr       <- Zhu |> filter(Hours == 24) |> mutate(conc_uM = factor(conc_uM))
+
+IR_burden_SRP1141379_24hr <- ggplot() +
+  geom_col(data = mean_Zhu_24hr, aes(x = conc_uM, y = mean_dir),
+           fill = "#9E9E9E", colour = "black") +
+  geom_jitter(data = Zhu_24hr, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
+  geom_errorbar(
+    data = mean_Zhu_24hr,
+    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
+    width = 0.1) +
+  geom_signif(
+    comparisons = list(c("0", "3"), c("0", "10"), c("3", "10")),
+    annotations = c("**", "***", "ns"),   # Hours=24: p=0.0047, p=0.0001, p=0.5133
+    y_position  = c(3600, 4000, 3200),
+    tip_length  = 0.01,
+    textsize    = 4
+  ) +
+  theme_bw() +
+  labs(
+    y = "Intron retention events", 
+    x = expression("CC-671 Concentration (" * mu * "M)")) +
+  scale_y_continuous(limits = c(0, 5000)) +
+  theme(panel.grid.major.x = element_blank(),
+        text = element_text(size = 11),
+        legend.text = element_text(size = 11),
+        strip.text = element_text(size = 11),
+        axis.title = element_text(size = 12),
+        title = element_text(size = 14),
+        legend.title = element_blank(),
+        legend.position = "bottom")
+
+IR_burden_SRP1141379_24hr
+
+
+```
+
+```{r}
+ir_ratio_zhu_24hours <- ggarrange(ir_ratio_zhu.3, ir_ratio_zhu.4, ir_ratio_zhu.3_sig,  ir_ratio_zhu.4_sig, ncol = 2, nrow = 2, labels =c("B", "E", "C", "F"))
+
+ir_ratio_zhu_24hours
+
+ir_volcano_plot_24hr_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_24hr, ir_volcano_plot_SRP141379_10uM_24hr, ncol = 2, labels = c("D", "G"))
+
+Zhu_24hours_ir <- ggarrange(IR_burden_SRP1141379_24hr, ir_ratio_zhu_24hours, ir_volcano_plot_24hr_SRP141379,  ncol = 1, heights = c(1, 2, 1), labels = c("A", ""))
+Zhu_24hours_ir
+
+ggsave(Zhu_24hours_ir,
+       filename = "Zhu_24hours_ir.PDF",
+       height = 280,
+       width = 180,
+       units = "mm")
+```
+
 
 ## Differentially expressed genes
 
 ```{r}
 dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_24hr_3uM_gene, volcano_zhu_6hr_10uM_gene,  volcano_zhu_24hr_10uM_gene, ncol =2, nrow = 2, labels = c("B", "C", "", ""))
-
-plot_deg <- ggarrange(deg_ERP171667_plot, dEG_SRP141379_volcano, ncol = 1, labels = c("A", ""), heights = c(1, 2))
-
-plot_deg
-
-ggsave(plot = plot_deg,
-       filename = "DEG_combined.PNG",
-       height = 180,
-       width = 180, unit = "mm")
+# 
+# plot_deg <- ggarrange(deg_ERP171667_plot, dEG_SRP141379_volcano, ncol = 1, labels = c("A", ""), heights = c(1, 2))
+# 
+# plot_deg
+# 
+# ggsave(plot = plot_deg,
+#        filename = "DEG_combined.PNG",
+#        height = 180,
+#        width = 180, unit = "mm")
 ```
 
 
