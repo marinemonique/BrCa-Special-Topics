@@ -640,10 +640,6 @@ Velde <- metadata_sc5903_mw %>% filter(Citation == "Velde et al. 2026")
 
 Iwai <- metadata_sc5903_mw |> filter(Citation == "Iwai et al. 2018") 
 Iwai <- Iwai |> mutate(Concentration = factor(Concentration, levels = c("0nM", "30nM", "100nM", "300nM"), ordered = TRUE))
-
-delta_ir_srp_iwai <- read_tsv(
-  "results/ir/SRP112607_delta_ir.tsv",
-  show_col_types = FALSE)
 ```
 
 
@@ -652,15 +648,13 @@ delta_ir_srp_iwai <- read_tsv(
 ```{r import dIR data for Velde et al 2026}
 Velde_T025_vs_DMSO <- read_csv("results/ir/ERP171667/T025_vs_DMSO.csv")
 Velde_T025_vs_DMSO <- Velde_T025_vs_DMSO |>
-  mutate(
-    "Hours" = 6,
+  mutate("Hours" = 6,
     "Concentration" = "1uM",
-    "Study" = "Velde"
-  )
+    "Study" = "Velde")
+
 Velde_T025_vs_DMSO <- Velde_T025_vs_DMSO |> 
   mutate(EnsemblID = str_extract(`...1`, "ENSG[0-9]+"),
          intron_id = `...1`)
-
 # Analysing introns where the delta IR ratio was > 0.05
 erp_combined <- read_tsv(
   "results/ir/ERP171667_shah_filtered_combined.tsv",
@@ -695,20 +689,19 @@ Summary (ERP171667):
 
 ### Scatterplot
 Use the introns that have delta IR > absolute value of 0.1. Then compare the IR ratio in MB231 cells and those treated with T-025.
+
 ```{r}
 erp_mean <- erp_combined |> 
-  filter(IntronID %in% delta_erp_filter$IntronID) |> 
-  #only including introns that passed the structural filtering,
+  filter(IntronID %in% delta_erp_filter$IntronID) |> #only including introns that passed the structural filtering,
   #and have a delta IR ratio greater than or equal to |0.1|
   group_by(IntronID, condition) %>%
   summarise(
     #mean_intron_depth = mean(IntronDepth, na.rm = TRUE),
-    mean_ir_ratio      = mean(IRratio, na.rm = TRUE),
+    mean_ir_ratio = mean(IRratio, na.rm = TRUE),
     .groups = "drop")
 
 erp_wide <- erp_mean %>%
-  pivot_wider(
-    id_cols   = IntronID,
+  pivot_wider(id_cols   = IntronID,
     names_from  = condition,
     values_from =  mean_ir_ratio)
 # 2559 Introns.
@@ -729,27 +722,22 @@ ERP171667_ir_ratio_delta_ir <- ggplot() +
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
     x = "mean IR ratio - T-025",
-    y = "mean IR ratio - DMSO"
-  )
+    y = "mean IR ratio - DMSO")
 ERP171667_ir_ratio_delta_ir_deseq_sig <- ggplot() +
-  #geom_point(data = erp_wide, aes(x = T025, y = DMSO), alpha = 0.4, size = 0.5) +
   theme_bw()+
   theme(panel.grid = element_blank(),
         panel.grid.major = element_blank())+
   geom_point(data = erp_sig_wide, aes(x = T025, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
   geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
-  labs(
-    x = "mean IR ratio - T-025",
+  labs(x = "mean IR ratio - T-025",
     y = "mean IR ratio - DMSO")
-
 ```
 
 Figure X. Scatterplot showing intron retention events that had a mean IR ratio of greater than 0.05 in at xx cells treated with DMSO or T025 after 24 hours. Intron retention events associated with significant dIR (p-adjust < 0.01) and delta IR ratio of > 0.1 or < -0.1 are shown in blue. dIR was tested using DESeq2.
 
 ```{r}
 library(dplyr)
-
 # For the full dataset
 erp_wide <- erp_wide %>%
   mutate(
@@ -759,11 +747,9 @@ erp_wide <- erp_wide %>%
       TRUE ~ "within"))
 
 table(erp_wide$position)
-
 1653/906
 # or
 erp_wide %>% count(position)
-
 # For the significant subset
 erp_sig_wide <- erp_sig_wide %>%
   mutate(
@@ -780,26 +766,30 @@ erp_sig_wide %>% count(position)
 1618 introns that have a base expression of 10, FDR < 0.01, and a delta IR ratio greater than or equal to |0.1|.
 
 ### Intron retention events
-Aim: 
+
 ```{r}
 mean_Velde <- Velde |>
   group_by(conc_uM, exp_design) |>
   summarise(
     mean_dir = mean(sample_introns),
-    se_dir   = sd(sample_introns) / sqrt(n()),   # sd / sqrt(n)
-    .groups  = "drop"
-  )
+    se_dir   = sd(sample_introns) / sqrt(n()), #sd/sqrt(n)
+    .groups  = "drop")
 
 ERP171667_IR_burden <- ggplot() +
-  geom_col(data = mean_Velde, aes(x = conc_uM, y = mean_dir), fill = "#9E9E9E", colour = "black") +
+  geom_col(data = mean_Velde, 
+           aes(x = conc_uM, 
+               y = mean_dir),
+           fill = "#9E9E9E",
+           colour = "black") +
   geom_jitter(data = Velde, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
-  geom_errorbar(
-    data = mean_Velde,
-    aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), width = 0.1)+
+  geom_errorbar(data = mean_Velde,
+    aes(x = conc_uM, 
+        ymin = mean_dir - se_dir, 
+        ymax = mean_dir + se_dir),
+    width = 0.1) +
   theme_bw()+
   labs(y = "Intron retention events",
-       x = expression("T-025 Concentration (" * mu * "M)")#, title = "ERP171667"
-       )+
+       x = expression("T-025 Concentration (" * mu * "M)")) +
   scale_y_continuous(limits = c(0, 5000))+
   theme(panel.grid.major.x = element_blank(),
         text = element_text(size = 11),
@@ -809,15 +799,14 @@ ERP171667_IR_burden <- ggplot() +
         title = element_text(size = 14),
         legend.title = element_blank(),
         legend.position = c(0.95, 0.99),
-        legend.justification = c("right", "top")
-        )
+        legend.justification = c("right", "top"))
 
-ggsave(filename = "ERP171667_IR_burden.PNG",
-       plot = ERP171667_IR_burden,
-       height = 180,
-       width = 160,
-       unit = "mm")
-
+2959.67/2031
+# ggsave(filename = "ERP171667_IR_burden.PNG",
+#        plot = ERP171667_IR_burden,
+#        height = 180,
+#        width = 160,
+#        unit = "mm")
 ```
 
 Figure X. Number of intron retention events passing filtering criteria (structural criteria within samples, and  IR ratio > 0.05 in at least one group after intra-sample filtering). Error bars represent standard error of the mean. Coloured dot is the mean of the samples.
@@ -825,7 +814,6 @@ Figure X. Number of intron retention events passing filtering criteria (structur
 ### Determine whether time or concentration drive difference in intron retention between control and treatment
 ```{r}
 library(glmmTMB)
-
 # Treat Hours and Concentration as factors if you only have a few discrete levels 
 Velde$Concentration <- factor(Velde$Concentration)
 
@@ -834,8 +822,7 @@ table(Velde$Concentration)
 model <- glmmTMB(
   sample_introns ~ Concentration,
   family = nbinom2,
-  data = Velde
-)
+  data = Velde)
 
 summary(model)
 drop1(model, test = "Chisq")
@@ -849,22 +836,16 @@ emmeans(model, pairwise ~ Concentration, type = "response")
 # merge delta IR and the dIR data
 volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
 
-
 volcano_velde <- volcano_velde |> 
   mutate(
     meets_delta = delta_mean_ir_ratio_T025_vs_DMSO >= 0.1 |
                   delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
     significance = case_when(
-      #meets_delta & padj < 0.001 ~ "red",
       meets_delta & padj < 0.01  ~ "#701705",
-      #meets_delta & padj < 0.05  ~ "salmon",
-      TRUE                       ~ "#a3a8ac"
-    )
-  ) |> 
+      TRUE                       ~ "#a3a8ac")) |> 
   filter(baseMean > 10)
 
 volcano_velde |> group_by(significance) |> summarise(n_introns = n())
-
 
 volc_data <- volcano_velde |>
   filter(baseMean > 10) |> #ensures that only introns with enough expression are included
@@ -895,9 +876,19 @@ ir_volcano_plot_ERP171667 <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_
        x = expression(Delta ~ "IR ratio (T-025/DMSO)"))
 
 ir_volcano_plot_ERP171667
+
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_T025_vs_DMSO > 0.5) |> arrange(desc(delta_mean_ir_ratio_T025_vs_DMSO)) |> dplyr::select(...1, intron_id, delta_mean_ir_ratio_T025_vs_DMSO, padj)
+
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_T025_vs_DMSO < -0.5) |> arrange(desc(delta_mean_ir_ratio_T025_vs_DMSO)) |> dplyr::select(...1, intron_id, delta_mean_ir_ratio_T025_vs_DMSO, padj)
 ```
 
 Figure X. Volcano plot of delta mean ir ratio in cells treated with T025 (n=3) and xx cells treated with DMSO (n =3) after 24 hours. Significant intron retention events are shown in red, where significance indicates the intron had a basemean > 10, the delta IR ratio was greater than 0.1, or less than -0.1, and the p-adjust (calculated in DESeq2 when calculating Log fold change) was < 0.001.
+```{r}
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_T025_vs_DMSO > 0.5 | delta_mean_ir_ratio_T025_vs_DMSO < -0.75) |> arrange(delta_mean_ir_ratio_T025_vs_DMSO) |> dplyr::select(...1, intron_id, padj)
+```
 
 
 ```{r}
@@ -975,11 +966,9 @@ srp_combined <- srp_combined |>
 dim(srp_combined)
 head(srp_combined)
 
-
 delta_ir_srp_zhu <- read_tsv(
   "results/ir/SRP141379_delta_ir_by_timepoint.tsv",
-  show_col_types = FALSE
-)
+  show_col_types = FALSE)
 ```
 
 ### Intron retention burden
@@ -1024,10 +1013,10 @@ IR_burden_SRP1141379 <- ggplot() +
         legend.position = c(0.98, 0.99),
 legend.justification = c("right", "top"))
   
-ggsave(filename = "SRP1141379_IR_burden.PNG",
-         plot = IR_burden_SRP1141379,
-    units = "mm",width = 200,
-         height = 180)
+# ggsave(filename = "SRP1141379_IR_burden.PNG",
+#          plot = IR_burden_SRP1141379,
+#     units = "mm",width = 200,
+#          height = 180)
 ```
 
 ### Determine whether time or concentration drive difference in intron retention between control and treatment
@@ -1376,7 +1365,7 @@ sig_dIR_zhu_24hr_10um <- dIR_24hrs_CC671_10uM_vs_DMSO |>
 zhu_wide_24hr_10uM_sig <- zhu_wide_24hr_10uM |> filter(IntronID %in% sig_dIR_zhu_24hr_10um$intron_id)
 
 ir_ratio_zhu.4 <- ggplot() +
-  geom_point(data = zhu_wide_24hr_10uM, aes(x = CC671_3uM, y = DMSO), colour = "black", alpha = 0.4, size = 0.5) +
+  geom_point(data = zhu_wide_24hr_10uM, aes(x = CC671_10uM, y = DMSO), colour = "black", alpha = 0.4, size = 0.5) +
   geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
@@ -1389,7 +1378,7 @@ ir_ratio_zhu.4 <- ggplot() +
 ir_ratio_zhu.4
 
 ir_ratio_zhu.4_sig <- ggplot() +
-  geom_point(data = zhu_wide_24hr_10uM_sig, aes(x = CC671_3uM, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
+  geom_point(data = zhu_wide_24hr_10uM_sig, aes(x = CC671_10uM, y = DMSO), colour = "#701705", alpha = 0.4, size = 0.5) +
   geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
@@ -1411,9 +1400,7 @@ zhu_wide_24hr_10uM <- zhu_wide_24hr_10uM %>%
     position = case_when(
       DMSO > CC671_10uM + 0.1 ~ "above",
       DMSO < CC671_10uM - 0.1 ~ "below",
-      TRUE ~ "within"
-    )
-  )
+      TRUE ~ "within"))
 
 zhu_wide_24hr_10uM %>% count(position)
 637/432
@@ -1424,9 +1411,7 @@ zhu_wide_24hr_10uM_sig <- zhu_wide_24hr_10uM_sig %>%
     position = case_when(
       DMSO > CC671_10uM + 0.1 ~ "above",
       DMSO < CC671_10uM - 0.1 ~ "below",
-      TRUE ~ "within"
-    )
-  )
+      TRUE ~ "within"))
 
 zhu_wide_24hr_10uM_sig %>% count(position)
 442/240
@@ -1451,7 +1436,8 @@ volcano_zhu_6hr_3uM <- left_join(
                   delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1,
     significance = case_when(
       meets_delta & padj < 0.01  ~ "#701705",
-      TRUE                       ~ "#a3a8ac"))
+      TRUE                       ~ "#a3a8ac")) |> 
+  filter(baseMean > 10)
 
 volc_data <- volcano_zhu_6hr_3uM |>
   filter(baseMean > 10) |>
@@ -1472,7 +1458,17 @@ ir_volcano_plot_SRP141379_3uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_rat
   scale_x_continuous(limits = c(-1, 1)) +
   theme(panel.grid = element_blank())+
   labs( x = expression(Delta ~ "IR ratio (CC-671 3" * mu * "M/DMSO)"))
+ir_volcano_plot_SRP141379_3uM_6hr
+
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_3uM_vs_DMSO > 0.5 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO < -0.5) |> arrange(desc(delta_mean_ir_ratio_CC671_3uM_vs_DMSO)) |> dplyr::select(intron_id, delta_mean_ir_ratio_CC671_3uM_vs_DMSO,padj)
 ```
+
+```{r}
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_3uM_vs_DMSO > 0.5 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO < -0.5) |> arrange((delta_mean_ir_ratio_CC671_3uM_vs_DMSO)) |> dplyr::select(...1, intron_id, padj)
+```
+
 
 ```{r}
 ir_l2fc_plot_SRP141379_3uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO, y = log2FoldChange, colour = significance)) +
@@ -1507,7 +1503,8 @@ volcano_zhu_6hr_10uM <- left_join(
                   delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1,
     significance = case_when(
       meets_delta & padj < 0.01  ~ "#701705",
-      TRUE                       ~ "#a3a8ac"))
+      TRUE                       ~ "#a3a8ac")) |> 
+  filter(baseMean > 10)
 
 volc_data <- volcano_zhu_6hr_10uM |>
   filter(baseMean > 10) |>
@@ -1530,24 +1527,14 @@ ir_volcano_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ra
     #title = "6 hours",
        x = expression(Delta ~ "IR ratio (CC671 10" * mu * "M/DMSO)"))
 
-# IR ratio and log2 fold change
-ir_l2fc_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO,
-                                                         y = log2FoldChange,
-                                                         colour = significance)) +
-  geom_point(alpha = 0.6, size = 0.6) +
-  scale_colour_identity() +
-  theme_bw()+
-  scale_x_continuous(limits = c(-1, 1)) +
-   geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  theme(panel.grid = element_blank())+
-  labs(
-    #title = "6 hours",
-       x = expression(Delta ~ "IR ratio (CC-671 10" * mu * "M/DMSO)")) +
-  theme(panel.grid = element_blank(),
-        panel.grid.major = element_blank())
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_10uM_vs_DMSO > 0.5 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO < -0.5) |> arrange(desc(delta_mean_ir_ratio_CC671_10uM_vs_DMSO)) |> dplyr::select(delta_mean_ir_ratio_CC671_10uM_vs_DMSO, intron_id, padj)
 ```
 
+```{r}
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_10uM_vs_DMSO > 0.5 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO < -0.5) |> arrange(delta_mean_ir_ratio_CC671_10uM_vs_DMSO) |> dplyr::select(...1, intron_id, padj)
+```
 
 #### CC671 3uM @ 24 hours
 
@@ -1555,7 +1542,6 @@ ir_l2fc_plot_SRP141379_10uM_6hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio
 dIR_24hrs_CC671_3uM_vs_DMSO <- read_csv("results/ir/SRP141379/24hr/CC671_3uM_vs_DMSO.csv") |> 
   mutate(intron_id = `...1`)
 delta_ir_24hr_3uM <- delta_ir_srp_zhu |> filter(hours == 24)
-
 
 volcano_zhu_24hr_3uM <- left_join(
   dIR_24hrs_CC671_3uM_vs_DMSO,
@@ -1567,9 +1553,8 @@ volcano_zhu_24hr_3uM <- left_join(
                   delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1,
     significance = case_when(
       meets_delta & padj < 0.01  ~ "#701705",
-      TRUE                       ~ "#a3a8ac"
-    )
-  )
+      TRUE                       ~ "#a3a8ac")) |> 
+  filter(baseMean > 10)
 
 volc_data <- volcano_zhu_24hr_3uM |>
   filter(baseMean > 10) |> #9332 introns
@@ -1592,22 +1577,14 @@ ir_volcano_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ra
   theme(panel.grid = element_blank())+
   labs(x= expression(Delta ~ "IR ratio (CC671 3" * mu * "M/DMSO)"))
 
-# Delta IR a d log2Fold
-ir_l2fc_plot_SRP141379_3uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_3uM_vs_DMSO,
-                                                         y = log2FoldChange,
-                                                         colour = significance)) +
-  geom_point(alpha = 0.6, size = 0.6) +
-  scale_colour_identity() +
-  theme_bw()+
-  scale_x_continuous(limits = c(-1, 1)) +
-  theme(panel.grid = element_blank())+
-  geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  labs(title = "24 hours",
-       x = expression(Delta ~ "IR ratio (CC-671 3" * mu * "M/DMSO)")) +
-  theme(panel.grid = element_blank(),
-        panel.grid.major = element_blank())
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_3uM_vs_DMSO > 0.5 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO < -0.5) |> arrange(desc(delta_mean_ir_ratio_CC671_3uM_vs_DMSO)) |> dplyr::select(...1, intron_id, padj)
 
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_3uM_vs_DMSO > 0.5 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO < -0.5) |> arrange(delta_mean_ir_ratio_CC671_3uM_vs_DMSO) |> dplyr::select(delta_mean_ir_ratio_CC671_3uM_vs_DMSO, intron_id, padj)
+
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_3uM_vs_DMSO > 0.3 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO < -0.5) |> arrange(delta_mean_ir_ratio_CC671_3uM_vs_DMSO) |> dplyr::select(delta_mean_ir_ratio_CC671_3uM_vs_DMSO, intron_id, padj)
 ```
 
 9332 introns have base mean > 10
@@ -1631,8 +1608,8 @@ volcano_zhu_24hr_10uM <- left_join(
                   delta_mean_ir_ratio_CC671_10uM_vs_DMSO <= -0.1,
     significance = case_when(
       meets_delta & padj < 0.01  ~ "#701705",
-      TRUE                       ~ "#a3a8ac"
-    ))
+      TRUE                       ~ "#a3a8ac")) |> 
+  filter(baseMean > 10)
 
 volc_data <- volcano_zhu_24hr_10uM |>
   filter(baseMean > 10) |>
@@ -1651,22 +1628,13 @@ ir_volcano_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_r
   geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
   geom_hline(yintercept = -log10(0.01), linetype = "dashed", alpha = 0.7, colour = "black",size = 0.5)+
   theme(panel.grid = element_blank())+
-  labs(
-    #title = "24 hours",
-       x = expression(Delta ~ "IR ratio (CC-671 10" * mu * "M/DMSO)"))
+  labs(x = expression(Delta ~ "IR ratio (CC-671 10" * mu * "M/DMSO)"))
 
-# Delta IR ratio and log2fold change
-ir_l2fc_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_CC671_10uM_vs_DMSO, y = log2FoldChange, colour = significance)) +
-  geom_point(alpha = 0.6, size = 0.6) +
-  scale_colour_identity() +
-  geom_vline(xintercept = -0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  geom_vline(xintercept = 0.1, linetype = "dashed", alpha = 0.7, colour = "black", size =0.5)+
-  theme_bw()+
-  scale_x_continuous(limits = c(-1, 1)) +
-  theme(panel.grid = element_blank())+
-  labs(x = expression(Delta ~ "IR ratio (CC-671 10" * mu * "M/DMSO)")) +
-  theme(panel.grid = element_blank(),
-        panel.grid.major = element_blank())
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_10uM_vs_DMSO > 0.5 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO < -0.5) |> arrange(desc(delta_mean_ir_ratio_CC671_10uM_vs_DMSO)) |> dplyr::select(...1, intron_id, padj)
+
+volc_data |> filter(significance == "#701705") |> filter(
+  delta_mean_ir_ratio_CC671_10uM_vs_DMSO > 0.4 | delta_mean_ir_ratio_CC671_10uM_vs_DMSO < -0.5) |> arrange(delta_mean_ir_ratio_CC671_10uM_vs_DMSO)|> dplyr::select(delta_mean_ir_ratio_CC671_10uM_vs_DMSO, intron_id, padj)
 ```
 
 9332 introns
@@ -1674,25 +1642,25 @@ ir_l2fc_plot_SRP141379_10uM_24hr <- ggplot(volc_data, aes(x = delta_mean_ir_rati
 ```{r}
 ir_volcano_plot_full_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_6hr, ir_volcano_plot_SRP141379_10uM_6hr, ir_volcano_plot_SRP141379_3uM_24hr, ir_volcano_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("A", "B", "C", "D"))
 
-ggsave(ir_volcano_plot_full_SRP141379,
-       filename = "ir_volc_SRP141379.pdf",
-       height = 180,
-       width = 180,
-       units = "mm")
+# ggsave(ir_volcano_plot_full_SRP141379,
+#        filename = "ir_volc_SRP141379.pdf",
+#        height = 180,
+#        width = 180,
+#        units = "mm")
 ```
 
 ```{r}
 ir_volcano_plot_full_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_6hr, ir_volcano_plot_SRP141379_3uM_24hr, ir_volcano_plot_SRP141379_10uM_6hr, ir_volcano_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("B", "C", "", ""))
 
-ir_l2fc_plot_full_SRP141379 <- ggpubr::ggarrange(ir_l2fc_plot_SRP141379_3uM_6hr, ir_l2fc_plot_SRP141379_3uM_24hr, ir_l2fc_plot_SRP141379_10uM_6hr, ir_l2fc_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("D", "E", "", ""))
+# ir_l2fc_plot_full_SRP141379 <- ggpubr::ggarrange(ir_l2fc_plot_SRP141379_3uM_6hr, ir_l2fc_plot_SRP141379_3uM_24hr, ir_l2fc_plot_SRP141379_10uM_6hr, ir_l2fc_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("D", "E", "", ""))
 
-SRP141379_ir_burden_volcano <- ggarrange(IR_burden_SRP1141379, ir_volcano_plot_full_SRP141379, ir_l2fc_plot_full_SRP141379, ncol = 1, heights = c(1, 1.2, 1.2), labels = c("A", "", ""))
+# SRP141379_ir_burden_volcano <- ggarrange(IR_burden_SRP1141379, ir_volcano_plot_full_SRP141379, ir_l2fc_plot_full_SRP141379, ncol = 1, heights = c(1, 1.2, 1.2), labels = c("A", "", ""))
 
-ggsave(SRP141379_ir_burden_volcano,
-       filename = "SRP141379_ir_burden_volcano.png",
-       height = 280,
-       width = 180,
-       units = "mm")
+# ggsave(SRP141379_ir_burden_volcano,
+#        filename = "SRP141379_ir_burden_volcano.png",
+#        height = 280,
+#        width = 180,
+#        units = "mm")
 ```
 
 ## 6.3. Iwai et al. 2018
@@ -1705,11 +1673,9 @@ mean_iwai <- Iwai |>
   summarise(
     mean_dir = mean(sample_introns),
     se_dir   = sd(sample_introns) / sqrt(n()),   # sd / sqrt(n)
-    .groups  = "drop"
-  )
+    .groups  = "drop")
 
 ggplot() +
-  #geom_boxplot(data = Velde, aes(x = exp_design, y = n_introns)) +
   geom_point(data = mean_iwai, aes(x = exp_design, y = mean_dir), size = 2) +
   geom_errorbar(
     data = mean_iwai,
@@ -1720,15 +1686,9 @@ ggplot() +
   theme(panel.grid.major.x = element_blank())
 
 
-ggplot() +
+iwai_ir_burden <- ggplot() +
   geom_col(data = Iwai, aes(x = conc_uM, y = sample_introns),
            fill = "#9E9E9E", colour = "black") +
-  # geom_jitter(data = Iwai, aes(x = conc_uM, y = sample_introns, shape = exp_design), width = 0.2) +
-  # geom_errorbar(
-  #   data = mean_iwai,
-  #   aes(x = conc_uM, ymin = mean_dir - se_dir, ymax = mean_dir + se_dir), 
-  #   width = 0.1
-  # ) +
   theme_bw() +
   labs(
     y = "Intron retention events", 
@@ -1736,12 +1696,108 @@ ggplot() +
   ) +
   scale_y_continuous(limits = c(0, 8250))+
   theme(panel.grid.major.x = element_blank(),
-        text = element_text(size = 11),
-        legend.text = element_text(size = 11),
-        strip.text = element_text(size = 11),
-        axis.title = element_text(size = 12),
-        title = element_text(size = 14))
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 11))
 
+```
+### IR ratio
+```{r}
+delta_ir_srp_iwai <- read_tsv(
+  "results/ir/SRP112607_delta_ir.tsv",
+  show_col_types = FALSE)
+
+delta_ir_srp_iwai <- delta_ir_srp_iwai |> mutate(
+    EnsemblID = str_extract(IntronID, "ENSG[0-9]+"))
+
+# 30nM
+delta_iwai_30nM_filter <- delta_ir_srp_iwai |> filter(                                                    delta_mean_ir_ratio_30nM_vs_DMSO != "NA" &                                                       delta_mean_ir_ratio_30nM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_30nM_vs_DMSO <= -0.1) #1173 introns
+
+
+ir_ratio_iwai_30 <- ggplot() +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  geom_point(data = delta_iwai_30nM_filter, aes(x = mean_ir_ratio_30nM, y = mean_ir_ratio_DMSO), colour = "black", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = expression("mean IR ratio (T-025 0.03" * mu * "M)"),
+    y = "mean IR ratio (DMSO)")
+
+ir_ratio_iwai_30
+
+delta_iwai_30nM_count <- delta_iwai_30nM_filter %>%
+  mutate(
+    position = case_when(
+      mean_ir_ratio_DMSO > mean_ir_ratio_30nM + 0.1 ~ "above",
+      mean_ir_ratio_DMSO < mean_ir_ratio_30nM - 0.1 ~ "below",
+      TRUE ~ "within"    ))
+delta_iwai_30nM_count %>% count(position)
+800/366 # 2.19
+
+# 100nM
+delta_iwai_100nM_filter <- delta_ir_srp_iwai |> filter(                                                    delta_mean_ir_ratio_100nM_vs_DMSO != "NA" &                                                       delta_mean_ir_ratio_100nM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_100nM_vs_DMSO <= -0.1) #3439 introns
+
+
+ir_ratio_iwai_100 <- ggplot() +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  geom_point(data = delta_iwai_100nM_filter, aes(x = mean_ir_ratio_100nM, y = mean_ir_ratio_DMSO), colour = "black", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = expression("mean IR ratio (T-025 0.1" * mu * "M)"),
+    y = "mean IR ratio (DMSO)")
+
+ir_ratio_iwai_100 
+
+delta_iwai_100nM_count <- delta_iwai_100nM_filter %>%
+  mutate(
+    position = case_when(
+      mean_ir_ratio_DMSO > mean_ir_ratio_100nM + 0.1 ~ "above",
+      mean_ir_ratio_DMSO < mean_ir_ratio_100nM - 0.1 ~ "below",
+      TRUE ~ "within"    ))
+delta_iwai_100nM_count %>% count(position)
+2976/456 #6.53
+
+# 300nM
+delta_iwai_300nM_filter <- delta_ir_srp_iwai |> filter(                                                    delta_mean_ir_ratio_300nM_vs_DMSO != "NA" &                                                       delta_mean_ir_ratio_300nM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_300nM_vs_DMSO <= -0.1) #6423 introns
+
+
+ir_ratio_iwai_300 <- ggplot() +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank())+
+  geom_point(data = delta_iwai_300nM_filter, aes(x = mean_ir_ratio_300nM, y = mean_ir_ratio_DMSO), colour = "black", alpha = 0.4, size = 0.5) +
+  geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
+  geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
+  labs(
+    x = expression("mean IR ratio (T-025 0.3" * mu * "M)"),
+    y = "mean IR ratio (DMSO)")
+
+ir_ratio_iwai_300 
+
+delta_iwai_300nM_count <- delta_iwai_300nM_filter %>%
+  mutate(
+    position = case_when(
+      mean_ir_ratio_DMSO > mean_ir_ratio_300nM + 0.1 ~ "above",
+      mean_ir_ratio_DMSO < mean_ir_ratio_300nM - 0.1 ~ "below",
+      TRUE ~ "within"    ))
+delta_iwai_300nM_count %>% count(position)
+6012/402 # 14.96
+
+
+iwai_ir_ratio <- ggarrange(ir_ratio_iwai_30, ir_ratio_iwai_100 ,ir_ratio_iwai_300, ncol = 1, labels = c("B", "C", "D"))
+
+iwai_full_plot <- ggarrange(iwai_ir_burden, iwai_ir_ratio, ncol = 2, widths = c(1, 0.8), labels = c("A", ""))
+iwai_full_plot
+
+# ggsave(filename = "SRP112607_ir_plot.PDF",
+#        plot = iwai_full_plot,
+#        width = 180,
+#        height = 180,
+#        unit = "mm")
 ```
 
 
@@ -1753,12 +1809,25 @@ ggplot() +
 dEG_T025_vs_DMSO <- read_csv("results/genes/ERP171667/T025_vs_DMSO.csv") 
 dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> mutate("EnsemblID" = ...1)
 
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+
+# Strip version suffixes if present (e.g. ENSG00000141510.15 -> ENSG00000141510)
+dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |>
+  mutate(EnsemblID_clean = sub("\\..*", "", EnsemblID))
+
+dEG_T025_vs_DMSO$SYMBOL <- mapIds(
+  org.Hs.eg.db,
+  keys = dEG_T025_vs_DMSO$EnsemblID_clean,
+  column = "SYMBOL",
+  keytype = "ENSEMBL",
+  multiVals = "first"
+)
+
 dEG_T025_vs_DMSO <- dEG_T025_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
-      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.001 ~ "red",
       (log2FoldChange >= 2 | log2FoldChange <= -2)  ~ "#701705",
-      #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     ))
 
@@ -1785,15 +1854,15 @@ deg_ERP171667_plot <- ggplot(volc_data, aes(x = log2FoldChange, y = -log10(padj)
 ```{r}
 dEG_T025_vs_DMSO |> 
   filter(log2FoldChange >= 2,
-         padj < 0.01)
+         padj < 0.01) |> 
+  arrange(desc(log2FoldChange)) |> 
+  dplyr::select(log2FoldChange, SYMBOL)
 
-#2151 genes of 17 724 are have increased expression in T025 compared to DMSO
+#3130 genes of 17 724 are have increased expression in T025 compared to DMSO
 ```
 
 2151 genes of 17 724 are have increased expression in T025 compared to DMSO
 
-
-### Downregulated
 
 ### Upregualted genes the same genes with increased IR?
 
@@ -1845,6 +1914,20 @@ dEG_6hr_CC671_3uM_vs_DMSO <- dEG_6hr_CC671_3uM_vs_DMSO |> filter(baseMean > 10) 
       #log2FoldChange >= 3 | log2FoldChange <= -3 & padj < 0.05  ~ "salmon",
       TRUE                       ~ "#a3a8ac"
     ))
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+
+# Strip version suffixes if present (e.g. ENSG00000141510.15 -> ENSG00000141510)
+dEG_6hr_CC671_3uM_vs_DMSO <- dEG_6hr_CC671_3uM_vs_DMSO |>
+  mutate(EnsemblID_clean = sub("\\..*", "", EnsemblID))
+
+dEG_6hr_CC671_3uM_vs_DMSO$SYMBOL <- mapIds(
+  org.Hs.eg.db,
+  keys = dEG_6hr_CC671_3uM_vs_DMSO$EnsemblID_clean,
+  column = "SYMBOL",
+  keytype = "ENSEMBL",
+  multiVals = "first"
+)
 
 volc_data <- dEG_6hr_CC671_3uM_vs_DMSO |>
   filter(baseMean > 10) |>
@@ -1877,7 +1960,8 @@ volcano_zhu_6hr_3uM_gene <-ggplot(volc_data, aes(x = log2FoldChange, y = -log10(
 ```{r}
 dEG_6hr_CC671_3uM_vs_DMSO |> 
   filter(log2FoldChange >= 2,
-         padj <= 0.05)
+         padj <= 0.05) |> 
+  arrange(desc(log2FoldChange))
 
 #351 genes of 18114 are have increased expression in cells treated with CC671 compared to DMSO
 ```
@@ -1902,6 +1986,16 @@ dEG_6hr_CC671_3uM_vs_DMSO |>
 ```{r}
 dEG_6hr_CC671_10uM_vs_DMSO <- read_csv("results/genes/SRP141379/6hr/CC671_10uM_vs_DMSO.csv")
 dEG_6hr_CC671_10uM_vs_DMSO <- dEG_6hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID" = ...1)
+dEG_6hr_CC671_10uM_vs_DMSO <- dEG_6hr_CC671_10uM_vs_DMSO |>
+  mutate(EnsemblID_clean = sub("\\..*", "", EnsemblID))
+
+dEG_6hr_CC671_10uM_vs_DMSO$SYMBOL <- mapIds(
+  org.Hs.eg.db,
+  keys = dEG_6hr_CC671_10uM_vs_DMSO$EnsemblID_clean,
+  column = "SYMBOL",
+  keytype = "ENSEMBL",
+  multiVals = "first"
+)
 
 dEG_6hr_CC671_10uM_vs_DMSO <- dEG_6hr_CC671_10uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
@@ -1933,7 +2027,8 @@ volcano_zhu_6hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log1
 ```{r}
 dEG_6hr_CC671_10uM_vs_DMSO |> 
   filter(log2FoldChange >= 2,
-         padj <= 0.01)
+         padj <= 0.01) |> 
+  arrange(desc(log2FoldChange))
 ```
 
 
@@ -1941,7 +2036,16 @@ dEG_6hr_CC671_10uM_vs_DMSO |>
 ```{r}
 dEG_24hr_CC671_3uM_vs_DMSO <- read_csv("results/genes/SRP141379/24hr/CC671_3uM_vs_DMSO.csv")
 dEG_24hr_CC671_3uM_vs_DMSO <- dEG_24hr_CC671_3uM_vs_DMSO |> mutate("EnsemblID" = ...1)
+dEG_24hr_CC671_3uM_vs_DMSO <- dEG_24hr_CC671_3uM_vs_DMSO |>
+  mutate(EnsemblID_clean = sub("\\..*", "", EnsemblID))
 
+dEG_24hr_CC671_3uM_vs_DMSO$SYMBOL <- mapIds(
+  org.Hs.eg.db,
+  keys = dEG_24hr_CC671_3uM_vs_DMSO$EnsemblID_clean,
+  column = "SYMBOL",
+  keytype = "ENSEMBL",
+  multiVals = "first"
+)
 # Volcano Plot
 dEG_24hr_CC671_3uM_vs_DMSO <- dEG_24hr_CC671_3uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
@@ -1973,7 +2077,8 @@ volcano_zhu_24hr_3uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log1
 ```{r}
 dEG_24hr_CC671_3uM_vs_DMSO |> 
   filter(log2FoldChange >= 2,
-         padj <= 0.01)
+         padj <= 0.01) |> 
+  arrange(desc(log2FoldChange))
 #88 genes of 17923 are have increased expression in cells treated with CC671 compared to DMSO
 ```
 
@@ -1983,6 +2088,16 @@ dEG_24hr_CC671_3uM_vs_DMSO |>
 dEG_24hr_CC671_10uM_vs_DMSO <- read_csv("results/genes/SRP141379/24hr/CC671_10uM_vs_DMSO.csv")
 dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> mutate("EnsemblID" = ...1)
 
+dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |>
+  mutate(EnsemblID_clean = sub("\\..*", "", EnsemblID))
+
+dEG_24hr_CC671_10uM_vs_DMSO$SYMBOL <- mapIds(
+  org.Hs.eg.db,
+  keys = dEG_24hr_CC671_10uM_vs_DMSO$EnsemblID_clean,
+  column = "SYMBOL",
+  keytype = "ENSEMBL",
+  multiVals = "first"
+)
 dEG_24hr_CC671_10uM_vs_DMSO <- dEG_24hr_CC671_10uM_vs_DMSO |> filter(baseMean > 10) |> #indicates enough expression for it to be meaningful
   mutate(
     significance = case_when(
@@ -2007,6 +2122,16 @@ volcano_zhu_24hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log
   scale_x_continuous(limits = c(-5, 7.5))
 ```
 
+
+```{r}
+dEG_24hr_CC671_10uM_vs_DMSO |> 
+  filter(log2FoldChange >= 2,
+         padj <= 0.01) |> 
+  arrange(desc(log2FoldChange)) |> 
+  dplyr::select(SYMBOL, log2FoldChange)
+```
+
+
 ```{r}
 dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene, 
                                    volcano_zhu_24hr_3uM_gene, 
@@ -2014,12 +2139,6 @@ dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene,
                                    volcano_zhu_24hr_10uM_gene, 
                                    ncol =2, nrow = 2, 
                                    labels = c("A", "B", "", ""))
-
-ggsave(filename = "dEG_SRP141379_volcano.PNG",
-       plot = dEG_SRP141379_volcano,
-       height = 180,
-       width = 180,
-       unit = "mm")
 ```
 
 
@@ -2033,7 +2152,7 @@ volcano_velde <- volcano_velde |>
                   delta_mean_ir_ratio_T025_vs_DMSO <= -0.1,
     significance = case_when(
       meets_delta & padj < 0.01  ~ "#701705",
-      TRUE                       ~ "#a3a8ac")  )
+      TRUE                       ~ "#a3a8ac")) |> filter(baseMean > 10)
 
 sig_dIR_erp <- Velde_T025_vs_DMSO |> filter(baseMean > 10,
   padj < 0.01, 
@@ -2779,13 +2898,13 @@ Zhu_6hours_ir
 ```{r}
 ir_volcano_plot_full_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3uM_6hr, ir_volcano_plot_SRP141379_3uM_24hr, ir_volcano_plot_SRP141379_10uM_6hr, ir_volcano_plot_SRP141379_10uM_24hr, ncol = 2, nrow =2, labels = c("B", "C", "", ""))
 
-SRP141379_ir_burden_volcano <- ggarrange(IR_burden_SRP1141379, ir_volcano_plot_full_SRP141379, ir_l2fc_plot_full_SRP141379, ncol = 1, heights = c(1, 1.2, 1.2), labels = c("A", "", ""))
-
-ggsave(SRP141379_ir_burden_volcano,
-       filename = "SRP141379_ir_burden_volcano.png",
-       height = 280,
-       width = 180,
-       units = "mm")
+# SRP141379_ir_burden_volcano <- ggarrange(IR_burden_SRP1141379, ir_volcano_plot_full_SRP141379, ir_l2fc_plot_full_SRP141379, ncol = 1, heights = c(1, 1.2, 1.2), labels = c("A", "", ""))
+# 
+# ggsave(SRP141379_ir_burden_volcano,
+#        filename = "SRP141379_ir_burden_volcano.png",
+#        height = 280,
+#        width = 180,
+#        units = "mm")
 ```
 
 ### 24 hours
@@ -2846,25 +2965,25 @@ ir_volcano_plot_24hr_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3u
 Zhu_24hours_ir <- ggarrange(IR_burden_SRP1141379_24hr, ir_ratio_zhu_24hours, ir_volcano_plot_24hr_SRP141379,  ncol = 1, heights = c(1.25, 1.5, 0.7), labels = c("A", ""))
 Zhu_24hours_ir
 
-# ggsave(Zhu_24hours_ir,
-#        filename = "Zhu_24hours_ir.PDF",
-#        height = 280,
-#        width = 180,
-#        units = "mm")
+ggsave(Zhu_24hours_ir,
+       filename = "Zhu_24hours_ir.PDF",
+       height = 280,
+       width = 180,
+       units = "mm")
 ```
 
 
 ## Differentially expressed genes
 
 ```{r}
-dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_24hr_3uM_gene, volcano_zhu_6hr_10uM_gene,  volcano_zhu_24hr_10uM_gene, ncol =2, nrow = 2, labels = c("B", "C", "", ""))
+dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene, volcano_zhu_24hr_3uM_gene, volcano_zhu_6hr_10uM_gene,  volcano_zhu_24hr_10uM_gene, ncol =2, nrow = 2, labels = c("B", "D", "C", "E"))
 
 plot_deg <- ggarrange(deg_ERP171667_plot, dEG_SRP141379_volcano, ncol = 1, labels = c("A", ""), heights = c(1, 1.5))
 
 plot_deg
 
 ggsave(plot = plot_deg,
-       filename = "DEG_combined.PNG",
+       filename = "DEG_combined.PDF",
        height = 220,
        width = 180, unit = "mm")
 ```
