@@ -481,6 +481,9 @@ ls -lh "$OUT"/*.fastq.gz | awk '{print $5, $9}'
 ```
 
 ## fastqc of cleaned data
+```{bash eval=FALSE, include=FALSE}
+
+```
 
 # 4. IRFinder
 
@@ -530,6 +533,10 @@ Met the criteria outlined in Shah et al. 2022.
 2.
 3.
 4.
+
+```{bash eval=FALSE, include=FALSE}
+
+```
 
 # Quick summary statistics
 
@@ -1073,8 +1080,9 @@ rev_hours_by_group_df <- as.data.frame(rev_hours_by_group$contrasts)
 dIR_6hrs_CC671_3uM_vs_DMSO <- read_csv("results/ir/SRP141379/6hr/CC671_3uM_vs_DMSO.csv") |> 
   mutate(intron_id = `...1`)
 # 6 hours, 3uM
-delta_zhu_6hr_3uM_filter <- delta_ir_srp_zhu |> filter(hours == 6,
-                                                       delta_mean_ir_ratio_CC671_3uM_vs_DMSO != "NA" & #8786 introns present in both groups
+delta_zhu_6hr_3uM_filter <- delta_ir_srp_zhu |> 
+  filter(hours == 6,
+         delta_mean_ir_ratio_CC671_3uM_vs_DMSO != "NA" & #8786 introns present in both groups
                                                        delta_mean_ir_ratio_CC671_3uM_vs_DMSO >= 0.1 | delta_mean_ir_ratio_CC671_3uM_vs_DMSO <= -0.1) #1648 introns
 
 zhu_mean_6hr_3uM <- srp_combined |>
@@ -1721,8 +1729,8 @@ ir_ratio_iwai_30 <- ggplot() +
   geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
-    x = expression("mean IR ratio (T-025 0.03" * mu * "M)"),
-    y = "mean IR ratio (DMSO)")
+    x = expression("IR ratio (T-025 0.03" * mu * "M)"),
+    y = "IR ratio (DMSO)")
 
 ir_ratio_iwai_30
 
@@ -1747,8 +1755,8 @@ ir_ratio_iwai_100 <- ggplot() +
   geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
-    x = expression("mean IR ratio (T-025 0.1" * mu * "M)"),
-    y = "mean IR ratio (DMSO)")
+    x = expression("IR ratio (T-025 0.1" * mu * "M)"),
+    y = "IR ratio (DMSO)")
 
 ir_ratio_iwai_100 
 
@@ -1773,8 +1781,8 @@ ir_ratio_iwai_300 <- ggplot() +
   geom_abline(slope = 1, intercept = 0.1, linetype = "dashed", color = "black", size = 0.1)+
   geom_abline(slope = 1, intercept = -0.1, linetype = "dashed", color = "black", size = 0.1)+
   labs(
-    x = expression("mean IR ratio (T-025 0.3" * mu * "M)"),
-    y = "mean IR ratio (DMSO)")
+    x = expression("IR ratio (T-025 0.3" * mu * "M)"),
+    y = "IR ratio (DMSO)")
 
 ir_ratio_iwai_300 
 
@@ -1793,11 +1801,11 @@ iwai_ir_ratio <- ggarrange(ir_ratio_iwai_30, ir_ratio_iwai_100 ,ir_ratio_iwai_30
 iwai_full_plot <- ggarrange(iwai_ir_burden, iwai_ir_ratio, ncol = 2, widths = c(1, 0.8), labels = c("A", ""))
 iwai_full_plot
 
-# ggsave(filename = "SRP112607_ir_plot.PDF",
-#        plot = iwai_full_plot,
-#        width = 180,
-#        height = 180,
-#        unit = "mm")
+ggsave(filename = "SRP112607_ir_plot.PDF",
+       plot = iwai_full_plot,
+       width = 180,
+       height = 180,
+       unit = "mm")
 ```
 
 
