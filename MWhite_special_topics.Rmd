@@ -2037,6 +2037,12 @@ dEG_6hr_CC671_10uM_vs_DMSO |>
   filter(log2FoldChange >= 2,
          padj <= 0.01) |> 
   arrange(desc(log2FoldChange))
+
+dEG_6hr_CC671_10uM_vs_DMSO |>
+filter(log2FoldChange >= 2,
+         padj < 0.01) |> 
+  arrange(desc(log2FoldChange)) |> 
+  dplyr::select(log2FoldChange, SYMBOL)
 ```
 
 
@@ -2087,7 +2093,12 @@ dEG_24hr_CC671_3uM_vs_DMSO |>
   filter(log2FoldChange >= 2,
          padj <= 0.01) |> 
   arrange(desc(log2FoldChange))
-#88 genes of 17923 are have increased expression in cells treated with CC671 compared to DMSO
+
+dEG_24hr_CC671_3uM_vs_DMSO |> 
+filter(log2FoldChange >= 2,
+         padj < 0.01) |> 
+  arrange(desc(log2FoldChange)) |> 
+  dplyr::select(log2FoldChange, SYMBOL)
 ```
 
 ### CC671 10uM @ 24 hours
