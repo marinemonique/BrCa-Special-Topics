@@ -491,13 +491,26 @@ ls -lh "$OUT"/*.fastq.gz | awk '{print $5, $9}'
 
 Using 150 bp mapability files for Liu et al. 2025 (Velde 2026)
 ```{r build reference genome with 150bp mapability files}
+singularity run IRFinder BuildRef \
+  -r IRFinder-repo/REF_150 \
+  -M IRFinder-repo/REF/Mapabilities/hg38/MapabilityExclusion.150.bed.gz \
+  -e IRFinder-repo/REF/extra-input-files/RNA.SpikeIn.ERCC.fasta.gz \
+  -b IRFinder-repo/REF/extra-input-files/Human_hg38_nonPolyA_ROI.bed \
+  ftp://ftp.ensembl.org/pub/release-100/gtf/homo_sapiens/Homo_sapiens.GRCh38.100.gtf.gz
+
+
 
 ```
 
 
 Using 100 bp mapability file for Zhu et al. 2018 and ...
 ```{r build reference genome with 100bp mapability files}
-
+singularity run IRFinder BuildRef  \
+-r IRFinder-repo/REF/Human-GRCh38-release100-100bp \
+-M IRFinder-repo/REF/Mapabilities/hg38/MapabilityExclusion.100bp.bed.gz \
+-e IRFinder-repo/REF/extra-input-files/RNA.SpikeIn.ERCC.fasta.gz \
+-b IRFinder-repo/REF/extra-input-files/Human_hg38_nonPolyA_ROI.bed \
+ftp://ftp.ensembl.org/pub/release-100/gtf/homo_sapiens/Homo_sapiens.GRCh38.100.gtf.gz
 ```
 
 ## 4.2. Run IRFinder
@@ -505,38 +518,603 @@ Using 100 bp mapability file for Zhu et al. 2018 and ...
 ### Velde et al. 2026
 
 ```{r run IRFinder for ERP171667}
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+TRIMMED="/bioinformatics/moniquew/BrCa-Special-Topics/trimmed_data"
+OUT="/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/ERP171667"
+REF="IRFinder-repo/REF_150/Human-GRCh38-release100"
+BIN="IRFinder-repo/bin/IRFinder"
+
+mkdir -p "$OUT"
+
+for num in $(seq 82 87); do
+  sample="ERR148560${num}"
+  outdir="OUT/{sample}_irfinder"
+
+  # Skip if already completed
+  if [ -f "${outdir}/IRFinder-IR-dir.txt" ]; then
+    echo "[$(date)] Skipping $sample — already complete"
+    continue
+  fi
+
+  echo "[$(date)] Running IRFinder: $sample"
+  BINFastQ-r"REF" -d "$outdir" \
+    "TRIMMED/{sample}_1_trimmed.fastq.gz" \
+    "TRIMMED/{sample}_2_trimmed.fastq.gz"
+  echo "[$(date)] Done: $sample"
+done
+
+echo ""
+echo "All ERR IRFinder jobs complete — $(date)"
+
 
 ```
 
 ### Zhu et al. 2018
 ```{r run IRFinder for SRP141379}
+#!/usr/bin/env bash
+# Run IRFinder on merged per-biological-replicate FASTQs
+# Study: SRP141379 (Zhu et al. 2018) — CAL51, CC-671 treatment
+# 16 biological replicates across 4 conditions x 2 timepoints
+
+set -euo pipefail
+
+MERGED="/bioinformatics/moniquew/BrCa-Special-Topics/merged_data"
+OUT="/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP141379"
+REF="IRFinder-repo/REF/Human-GRCh38-release100"
+BIN="IRFinder-repo/bin/IRFinder"
+
+mkdir -p "$OUT"
+
+run_irfinder() {
+  local srs="1"r1="2" r2="$3"
+  echo "[$(date)] Running IRFinder: $srs"
+  BINFastQ-r"REF" -d "OUT/{srs}_irfinder" \
+    "MERGED/r1" "MERGED/r2"
+  echo "[$(date)] Done: $srs"
+}
+
+# ---------------------------------------------------------------------------
+# 6hr — DMSO (0uM)
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204967 DMSO_6hr_rep1_R1.fastq.gz DMSO_6hr_rep1_R2.fastq.gz
+run_irfinder SRS3204969 DMSO_6hr_rep2_R1.fastq.gz DMSO_6hr_rep2_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 6hr — CC-671 3uM
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204971 CC671_3uM_6hr_rep1_R1.fastq.gz CC671_3uM_6hr_rep1_R2.fastq.gz
+run_irfinder SRS3204972 CC671_3uM_6hr_rep2_R1.fastq.gz CC671_3uM_6hr_rep2_R2.fastq.gz
+run_irfinder SRS3204973 CC671_3uM_6hr_rep3_R1.fastq.gz CC671_3uM_6hr_rep3_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 6hr — CC-671 10uM
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204977 CC671_10uM_6hr_rep1_R1.fastq.gz CC671_10uM_6hr_rep1_R2.fastq.gz
+run_irfinder SRS3204978 CC671_10uM_6hr_rep2_R1.fastq.gz CC671_10uM_6hr_rep2_R2.fastq.gz
+run_irfinder SRS3204979 CC671_10uM_6hr_rep3_R1.fastq.gz CC671_10uM_6hr_rep3_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 24hr — DMSO (0uM)
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204968 DMSO_24hr_rep1_R1.fastq.gz DMSO_24hr_rep1_R2.fastq.gz
+run_irfinder SRS3204970 DMSO_24hr_rep2_R1.fastq.gz DMSO_24hr_rep2_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 24hr — CC-671 3uM
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204974 CC671_3uM_24hr_rep1_R1.fastq.gz CC671_3uM_24hr_rep1_R2.fastq.gz
+run_irfinder SRS3204975 CC671_3uM_24hr_rep2_R1.fastq.gz CC671_3uM_24hr_rep2_R2.fastq.gz
+run_irfinder SRS3204976 CC671_3uM_24hr_rep3_R1.fastq.gz CC671_3uM_24hr_rep3_R2.fastq.gz
+
+# ---------------------------------------------------------------------------
+# 24hr — CC-671 10uM
+# ---------------------------------------------------------------------------
+run_irfinder SRS3204980 CC671_10uM_24hr_rep1_R1.fastq.gz CC671_10uM_24hr_rep1_R2.fastq.gz
+run_irfinder SRS3204981 CC671_10uM_24hr_rep2_R1.fastq.gz CC671_10uM_24hr_rep2_R2.fastq.gz
+run_irfinder SRS3204982 CC671_10uM_24hr_rep3_R1.fastq.gz CC671_10uM_24hr_rep3_R2.fastq.gz
+
+echo ""
+echo "All IRFinder jobs complete — $(date)"
 
 ```
 
 ### Iwai et al. 2018
 ```{r run IRFinder for SRP112607}
+#!/bin/bash
+
+# ============================================================
+# 100bp_IRquantify.sh
+# Runs IRFinder on paired-end trimmed fastq files for
+# SRP141379
+# ============================================================
+
+echo "Starting IRFinder pipeline: $(date)"
+
+# --- SRP112607 (Iwai et al. 2018) ---
+echo "Processing SRP112607: $(date)"
+
+for num in $(seq 360 363)
+do
+    echo "Processing SRR5833${num}: $(date)"
+    IRFinder-repo/bin/IRFinder FastQ -r IRFinder-repo/REF/Human-GRCh38-release100 -d /bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification/SRP112607/SRR5833numirfinder/bioinformatics/moniquew/BrCa-Special-Topics/trimmeddata/SRR5833{num}_1_trimmed.fastq.gz /bioinformatics/moniquew/BrCa-Special-Topics/trimmed_data/SRR5833${num}_2_trimmed.fastq.gz
+    echo "Done SRR5833${num}: $(date)"
 
 ```
 
 
 # 5. Shortlisting introns / filtering
 
-## 5.1. 
-First identify introns that have a mean IR ratio > 0.05 in at least one group.
-### Velde et al: either DMSO or T025
+## 5.1. Filtering based on criteria
 
-### Zhu et al: either CC671 3uM @ 6 hours, CC671 10uM @ 6 hours, CC671 3uM @ 24 hours, or CC671 10uM @ 24 hours.
-
-## 5.2. Within sample filtering
-Met the criteria outlined in Shah et al. 2022.
-1.
-2.
-3.
-4.
 
 ```{bash eval=FALSE, include=FALSE}
+# ============================================================
+# STEP 1: Criterion 1, computed at the POOLED INTRON level
+#
+#   (1) 0.7 <= SpliceLeft / SpliceRight <= 1.3
+#       "This filter ensures that introns are flanked by constitutive
+#       exons."
+#
+# SL and SR are now SUMMED ACROSS ALL SAMPLES in the study first, and the
+#   0.7-1.3 ratio test is applied ONCE per intron to the pooled sums.
+
+#
+# Output: structural_filtered_IRFinder-IR-dir.txt, written per sample.
+# Every sample in a study now retains the SAME set of IntronIDs at
+# this stage (those passing the pooled criterion 1 test) -- only the
+# per-intron values (SpliceLeft, SpliceRight, Coverage, IRratio, etc)
+# differ between samples' output files.
+# ============================================================
+
+library(tidyverse)
+source("ir_helpers.R")
+
+pooled_criterion1_whitelist <- function(raw_long, sl_sr_low = 0.7, sl_sr_high = 1.3) {
+  raw_long %>%
+    group_by(IntronID) %>%
+    summarise(
+      pooled_SL = sum(as.numeric(SpliceLeft), na.rm = TRUE),
+      pooled_SR = sum(as.numeric(SpliceRight), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      ratio = ifelse(pooled_SR > 0, pooled_SL / pooled_SR,
+                      ifelse(pooled_SL == 0, NA_real_, Inf))
+    ) %>%
+    filter(!is.na(ratio), ratio >= sl_sr_low, ratio <= sl_sr_high) %>%
+    pull(IntronID)
+}
+
+run_criterion1_filter <- function(sample_sheet, base_dir, label) {
+  raw_long <- sample_sheet %>%
+    pmap_dfr(function(sample, study, raw_file = "IRFinder-IR-dir.txt", ...) {
+      rp <- raw_path(base_dir, study, sample, filename = raw_file)
+      df <- read.delim(rp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+      df$IntronID <- make_ir_id(df)
+      df$Sample <- sample
+      df
+    })
+
+  whitelist <- pooled_criterion1_whitelist(raw_long)
+  message(label, ": ", length(whitelist), " / ", n_distinct(raw_long$IntronID),
+          " introns pass pooled criterion 1 (", round(100 * length(whitelist) / n_distinct(raw_long$IntronID), 1), "%)")
+
+  raw_cols <- setdiff(names(raw_long), c("IntronID", "Sample"))
+  summary <- sample_sheet %>%
+    pmap_dfr(function(sample, study, ...) {
+      kept <- raw_long %>%
+        filter(Sample == sample, IntronID %in% whitelist) %>%
+        select(all_of(raw_cols))
+      out <- structural_filtered_path(base_dir, study, sample)
+      write_tsv(kept, out)
+      tibble(study = study, sample = sample,
+             n_in = sum(raw_long$Sample == sample), n_kept = nrow(kept))
+    })
+  print(summary, n = Inf)
+  invisible(summary)
+}
+
+# ---- Sample sheets (same as before -- keep in sync with 02/03) ------------
+base_dir <- "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification"
+
+err_samples <- tribble(
+  ~sample,        ~condition,
+  "ERR14856082", "DMSO",
+  "ERR14856083", "DMSO",
+  "ERR14856084", "DMSO",
+  "ERR14856085", "T025",
+  "ERR14856086", "T025",
+  "ERR14856087", "T025"
+) %>% mutate(study = "ERP171667")
+
+srs_samples <- tribble(
+  ~sample,       ~condition,     ~hours, ~concentration,
+  "SRS3204967", "DMSO",          6,  0,
+  "SRS3204969", "DMSO",          6,  0,
+  "SRS3204968", "DMSO",          24, 0,
+  "SRS3204970", "DMSO",          24, 0,
+  "SRS3204971", "CC671_3uM",     6,  3,
+  "SRS3204972", "CC671_3uM",     6,  3,
+  "SRS3204973", "CC671_3uM",     6,  3,
+  "SRS3204974", "CC671_3uM",     24, 3,
+  "SRS3204975", "CC671_3uM",     24, 3,
+  "SRS3204976", "CC671_3uM",     24, 3,
+  "SRS3204977", "CC671_10uM",    6,  10,
+  "SRS3204978", "CC671_10uM",    6,  10,
+  "SRS3204979", "CC671_10uM",    6,  10,
+  "SRS3204980", "CC671_10uM",    24, 10,
+  "SRS3204981", "CC671_10uM",    24, 10,
+  "SRS3204982", "CC671_10uM",    24, 10
+) %>% mutate(study = "SRP141379")
+
+srp112607_samples <- tribble(
+  ~sample,        ~condition,
+  "SRR5833360", "DMSO",
+  "SRR5833361", "30nM",
+  "SRR5833362", "100nM",
+  "SRR5833363", "300nM"
+) %>%
+  mutate(study = "SRP112607", raw_file = "IRFinder-IR-nondir.txt")
+
+# ---- Run for all three studies ---------------------------------------------
+run_criterion1_filter(err_samples, base_dir, "ERP171667")
+run_criterion1_filter(srs_samples, base_dir, "SRP141379")
+run_criterion1_filter(srp112607_samples, base_dir, "SRP112607")
+
+# ============================================================
+# STEP 2: Population-level filters (criteria 2, 3, 4)
+#
+#   (2) (SL+SR) > 10  in >= 50% of samples
+#   (3) Coverage > 0.5 in >= 50% of samples
+#   (4) IRratio > 0.05 in >= 50% of samples, in AT LEAST ONE
+#       condition group ("normal or cancer" in the paper -> here,
+#       any one of the study's filter_group levels)
+#
+# Output: shah_filtered_IRFinder-IR-dir.txt, written alongside input.
+# Every sample in a study now carries the SAME final whitelist of
+# IntronIDs -- this is what makes cross-sample intronic burden
+# comparisons ( count of IRratio > 0.1 rows per sample )
+# ============================================================
+
+library(tidyverse)
+source("ir_helpers.R")
+
+base_dir <- "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification"
+
+# ---- Sample sheets (same as 01_shah_structural_filter.R -- keep these two
+# files in sync if you add/remove samples). `filter_group` is the grouping
+# criterion 4's "in >=50% of samples, in >=1 group" rule is applied to.
+err_samples <- tribble(
+  ~sample,        ~condition,
+  "ERR14856082", "DMSO",
+  "ERR14856083", "DMSO",
+  "ERR14856084", "DMSO",
+  "ERR14856085", "T025",
+  "ERR14856086", "T025",
+  "ERR14856087", "T025"
+) %>% mutate(study = "ERP171667", filter_group = condition)
+
+srs_samples <- tribble(
+  ~sample,       ~condition,     ~hours, ~concentration,
+  "SRS3204967", "DMSO",          6,  0,
+  "SRS3204969", "DMSO",          6,  0,
+  "SRS3204968", "DMSO",          24, 0,
+  "SRS3204970", "DMSO",          24, 0,
+  "SRS3204971", "CC671_3uM",     6,  3,
+  "SRS3204972", "CC671_3uM",     6,  3,
+  "SRS3204973", "CC671_3uM",     6,  3,
+  "SRS3204974", "CC671_3uM",     24, 3,
+  "SRS3204975", "CC671_3uM",     24, 3,
+  "SRS3204976", "CC671_3uM",     24, 3,
+  "SRS3204977", "CC671_10uM",    6,  10,
+  "SRS3204978", "CC671_10uM",    6,  10,
+  "SRS3204979", "CC671_10uM",    6,  10,
+  "SRS3204980", "CC671_10uM",    24, 10,
+  "SRS3204981", "CC671_10uM",    24, 10,
+  "SRS3204982", "CC671_10uM",    24, 10
+) %>% mutate(study = "SRP141379", filter_group = paste(condition, hours, sep = "_"))
+
+srp112607_samples <- tribble(
+  ~sample,        ~condition,
+  "SRR5833360", "DMSO",
+  "SRR5833361", "30nM",
+  "SRR5833362", "100nM",
+  "SRR5833363", "300nM"
+) %>% mutate(study = "SRP112607", filter_group = condition)
+
+# ---- Load one study's criterion-1-filtered files (raw values, restricted
+# to criterion-1-passing introns), tagged with metadata --------------------
+load_structural_filtered <- function(sample_sheet, base_dir) {
+  sample_sheet %>%
+    pmap_dfr(function(sample, study, ...) {
+      meta <- list(...)
+      fp <- structural_filtered_path(base_dir, study, sample)
+      df <- read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+      df$IntronID <- make_ir_id(df)
+      df$Sample <- sample
+      for (nm in names(meta)) df[[nm]] <- meta[[nm]]
+      df
+    })
+}
+
+# ---- Whitelist: IntronIDs passing criteria 2, 3, and 4 -------------------
+population_filter_whitelist <- function(long_df, n_total_samples,
+                                         slsr_sum_min = 10, coverage_min = 0.5,
+                                         ir_min = 0.05, frac_min = 0.5) {
+  sl <- as.numeric(long_df$SpliceLeft)
+  sr <- as.numeric(long_df$SpliceRight)
+  long_df <- long_df %>%
+    mutate(
+      pass_slsr = (sl + sr) > slsr_sum_min,
+      pass_cov  = as.numeric(Coverage) > coverage_min,
+      pass_ir   = as.numeric(IRratio) > ir_min
+    )
+
+  # Criteria 2 & 3: fraction over ALL samples in the study. An intron
+  # that dropped out of criterion 1 in this study entirely never
+  # appears here, so it's automatically excluded already; among introns
+  # present, a missing per-sample value counts as failing (conservative).
+  crit23 <- long_df %>%
+    group_by(IntronID) %>%
+    summarise(
+      frac_slsr = sum(pass_slsr, na.rm = TRUE) / n_total_samples,
+      frac_cov  = sum(pass_cov,  na.rm = TRUE) / n_total_samples,
+      .groups = "drop"
+    ) %>%
+    filter(frac_slsr >= frac_min, frac_cov >= frac_min) %>%
+    pull(IntronID)
+
+  # Criterion 4: fraction WITHIN each filter_group, passes if >=1 group
+  # clears it.
+  group_sizes <- long_df %>% distinct(Sample, filter_group) %>%
+    count(filter_group, name = "n_group")
+
+  crit4 <- long_df %>%
+    group_by(filter_group, IntronID) %>%
+    summarise(n_pass = sum(pass_ir, na.rm = TRUE), .groups = "drop") %>%
+    left_join(group_sizes, by = "filter_group") %>%
+    mutate(frac_ir = n_pass / n_group) %>%
+    filter(frac_ir >= frac_min) %>%
+    distinct(IntronID) %>%
+    pull(IntronID)
+
+  intersect(crit23, crit4)
+}
+
+run_population_filter <- function(sample_sheet, base_dir, label) {
+  long_df   <- load_structural_filtered(sample_sheet, base_dir)
+  whitelist <- population_filter_whitelist(long_df, n_total_samples = nrow(sample_sheet))
+
+  meta_cols <- c("Sample", "study", "filter_group", "condition", "hours",
+                 "concentration", "IntronID")
+  raw_cols <- setdiff(names(long_df), c(meta_cols, "pass_slsr", "pass_cov", "pass_ir"))
+
+  for (i in seq_len(nrow(sample_sheet))) {
+    smp   <- sample_sheet$sample[i]
+    study <- sample_sheet$study[i]
+    long_df %>%
+      filter(Sample == smp, IntronID %in% whitelist) %>%
+      select(all_of(raw_cols)) %>%
+      write_tsv(shah_filtered_path(base_dir, study, smp))
+  }
+
+  message(label, ": ", length(whitelist), " / ", n_distinct(long_df$IntronID),
+          " criterion-1-passing introns also pass criteria 2/3/4 (final whitelist).")
+  invisible(whitelist)
+}
+
+# ---- Run for all three studies ---------------------------------------------
+run_population_filter(err_samples, base_dir, "ERP171667")
+run_population_filter(srs_samples, base_dir, "SRP141379")
+run_population_filter(srp112607_samples, base_dir,
+                       "SRP112607 (n=1 per condition -- criterion 4 here reduces to 'IRratio > 0.05 in that single sample')")
+
+# ============================================================
+# 03_combine_shah_filtered.R
+#
+# Reads each sample's shah_filtered_IRFinder-IR-dir.txt (output of
+# 02_group_ir_filter.R), tags every row with that sample's metadata, and
+# row-binds everything into one long-format table per study --
+# analogous to ERR_total / Zhu_total in the original scripts, but
+# built from the Shah-filtered files rather than the raw ones.
+#
+# Output:
+#   results/ir/ERP171667_shah_filtered_combined.tsv
+#   results/ir/SRP141379_shah_filtered_combined.tsv
+#   results/ir/SRP112607_shah_filtered_combined.tsv
+#
+# REMINDER for downstream analysis: intronic burden per sample =
+# count of rows in these combined files, for that Sample, with
+# IRratio > 0.1. Introns not present here have already failed one
+# or more of criteria 1-4 and should not be counted at all.
+# ============================================================
+
+library(tidyverse)
+source("ir_helpers.R")
+
+base_dir <- "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification"
+
+# ---- Sample sheets (same as 01_shah_structural_filter.R) -------------------
+err_samples <- tribble(
+  ~sample,        ~condition,
+  "ERR14856082", "DMSO",
+  "ERR14856083", "DMSO",
+  "ERR14856084", "DMSO",
+  "ERR14856085", "T025",
+  "ERR14856086", "T025",
+  "ERR14856087", "T025"
+) %>% mutate(study = "ERP171667")
+
+srs_samples <- tribble(
+  ~sample,       ~condition,     ~hours, ~concentration,
+  "SRS3204967", "DMSO",          6,  0,
+  "SRS3204969", "DMSO",          6,  0,
+  "SRS3204968", "DMSO",          24, 0,
+  "SRS3204970", "DMSO",          24, 0,
+  "SRS3204971", "CC671_3uM",     6,  3,
+  "SRS3204972", "CC671_3uM",     6,  3,
+  "SRS3204973", "CC671_3uM",     6,  3,
+  "SRS3204974", "CC671_3uM",     24, 3,
+  "SRS3204975", "CC671_3uM",     24, 3,
+  "SRS3204976", "CC671_3uM",     24, 3,
+  "SRS3204977", "CC671_10uM",    6,  10,
+  "SRS3204978", "CC671_10uM",    6,  10,
+  "SRS3204979", "CC671_10uM",    6,  10,
+  "SRS3204980", "CC671_10uM",    24, 10,
+  "SRS3204981", "CC671_10uM",    24, 10,
+  "SRS3204982", "CC671_10uM",    24, 10
+) %>% mutate(study = "SRP141379")
+
+srp112607_samples <- tribble(
+  ~sample,        ~condition,
+  "SRR5833360", "DMSO",
+  "SRR5833361", "30nM",
+  "SRR5833362", "100nM",
+  "SRR5833363", "300nM"
+) %>% mutate(study = "SRP112607")
+
+# ---- Locate a sample's shah-filtered file (handles both naming eras) ------
+find_shah_file <- function(sample_dir) {
+  candidates <- c(
+    file.path(sample_dir, "shah_filtered_IRFinder-IR-dir.txt"),
+    file.path(sample_dir, "irratio_shah_filtered_IRFinder-dir.txt")
+  )
+  hit <- candidates[file.exists(candidates)]
+  if (length(hit) == 0) return(NA_character_)
+  hit[1]
+}
+
+# ---- Read + tag one sample, bind across a study's sample sheet ------------
+combine_study <- function(sample_sheet, base_dir) {
+  result <- sample_sheet %>%
+    pmap_dfr(function(sample, study, ...) {
+      meta <- list(...)
+      sample_dir <- file.path(base_dir, study, paste0(sample, "_irfinder"))
+      fp <- find_shah_file(sample_dir)
+      if (is.na(fp)) {
+        warning(sample, ": no shah-filtered file found in ", sample_dir, " -- skipped")
+        return(NULL)
+      }
+      df <- read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+      df$Sample <- sample
+      df$Study  <- study
+      for (nm in names(meta)) df[[nm]] <- meta[[nm]]
+      df
+    })
+
+  # If every sample was skipped (no shah-filtered file found for any of
+  # them), pmap_dfr returns a 0-row, 0-column tibble -- which then fails
+  # downstream in a confusing way (e.g. "column condition is not found").
+  # Fail loudly here instead.
+  if (ncol(result) == 0) {
+    stop(unique(sample_sheet$study), ": no shah-filtered files found for ANY sample.\n",
+         "Run 01_shah_structural_filter.R then 02_group_ir_filter.R for this study first.")
+  }
+  result
+}
+
+# ---- Run for both studies, write combined output --------------------------
+dir.create("results/ir", recursive = TRUE, showWarnings = FALSE)
+
+err_combined <- combine_study(err_samples, base_dir)
+write_tsv(err_combined, "results/ir/ERP171667_shah_filtered_combined.tsv")
+message("ERP171667: ", nrow(err_combined), " total rows across ",
+        n_distinct(err_combined$Sample), " samples")
+
+srs_combined <- combine_study(srs_samples, base_dir)
+write_tsv(srs_combined, "results/ir/SRP141379_shah_filtered_combined.tsv")
+message("SRP141379: ", nrow(srs_combined), " total rows across ",
+        n_distinct(srs_combined$Sample), " samples")
+
+srp112607_combined <- combine_study(srp112607_samples, base_dir)
+write_tsv(srp112607_combined, "results/ir/SRP112607_shah_filtered_combined.tsv")
+message("SRP112607: ", nrow(srp112607_combined), " total rows across ",
+        n_distinct(srp112607_combined$Sample), " samples")
+
+# ---- If you want one combined file across all studies instead/as well ----
+# all_combined <- bind_rows(err_combined, srs_combined, srp112607_combined)
+# write_tsv(all_combined, "results/ir/all_studies_shah_filtered_combined.tsv")
+```
+
+## 5.2. IR burden
+
+```{r eval=FALSE}
+# ============================================================
+# Read each sample's shah-filtered IRFinder file and report how
+# many introns survive (a simple proxy for the extent of intron
+# retention detected in that sample).
+#
+# ============================================================
+
+library(tidyverse)
+
+base_dir <- "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification"
+
+# ---- Locate each sample's filtered file (tries both naming conventions) --
+find_shah_file <- function(sample_dir) {
+  candidates <- c(
+    file.path(sample_dir, "shah_filtered_IRFinder-IR-dir.txt"),
+    file.path(sample_dir, "irratio_shah_filtered_IRFinder-dir.txt")
+  )
+  hit <- candidates[file.exists(candidates)]
+  if (length(hit) == 0) return(NA_character_)
+  hit[1]
+}
+
+# ---- Read every sample under a study directory into a named list ---------
+read_shah_filtered <- function(study_dir) {
+  sample_dirs <- list.dirs(study_dir, recursive = FALSE)
+  sample_dirs <- sample_dirs[grepl("_irfinder$", basename(sample_dirs))]
+
+  purrr::map(sample_dirs, function(d) {
+    fp <- find_shah_file(d)
+    if (is.na(fp)) return(NULL)
+    read.delim(fp, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+  }) %>%
+    set_names(sub("_irfinder$", "", basename(sample_dirs)))
+}
+
+# ---- Summarize: one row per sample, n introns retained --------------------
+# IMPORTANT: an IR "event" is only counted if it clears BOTH the upstream
+# whitelist (criteria 1-4, already reflected in the shah_filtered file) AND
+# the paper's IRratio > 0.1 threshold IN THAT SPECIFIC SAMPLE. 
+n_ir_threshold <- 0.1
+
+summarize_intron_counts <- function(shah_list) {
+  purrr::imap_dfr(shah_list, function(df, sample) {
+    tibble(
+      sample = sample,
+      n_whitelisted = if (is.null(df)) NA_integer_ else nrow(df),
+      n_introns = if (is.null(df)) NA_integer_ else sum(df$IRratio > n_ir_threshold, na.rm = TRUE),
+      mean_ir_ratio = if (is.null(df)) NA_real_ else mean(df$IRratio, na.rm = TRUE)
+    )
+  })
+}
+
+# ---- Run for both studies --------------------------------------------------
+err_list <- read_shah_filtered(file.path(base_dir, "ERP171667"))
+err_summary <- summarize_intron_counts(err_list)
+print(err_summary)
+
+srs_list <- read_shah_filtered(file.path(base_dir, "SRP141379"))
+srs_summary <- summarize_intron_counts(srs_list)
+print(srs_summary)
+
+srp112607_list <- read_shah_filtered(file.path(base_dir, "SRP112607"))
+srp112607_summary <- summarize_intron_counts(srp112607_list)
+print(srp112607_summary)
+
+# ---- Optional: save summaries -----------------------------------------
+dir.create("results/ir", recursive = TRUE, showWarnings = FALSE)
+write_csv(err_summary, "results/ir/ERP171667_intron_counts_per_sample.csv")
+write_csv(srs_summary, "results/ir/SRP141379_intron_counts_per_sample.csv")
+write_csv(srp112607_summary, "results/ir/SRP112607_intron_counts_per_sample.csv")
 
 ```
+
 
 # Quick summary statistics
 
@@ -649,8 +1227,63 @@ Iwai <- metadata_sc5903_mw |> filter(Citation == "Iwai et al. 2018")
 Iwai <- Iwai |> mutate(Concentration = factor(Concentration, levels = c("0nM", "30nM", "100nM", "300nM"), ordered = TRUE))
 ```
 
+```{r eval=FALSE}
+# ============================================================
+# STEP 3a: Differential intron retention, ERP171667 (DMSO vs T025)
+#
+# Fix vs. the original: the old DESeqDataSetFromIRFinder() built its
+# count matrix by cbind-ing samples positionally, trusting that every
+# file had the same rows in the same order. That's false once each
+# sample has gone through its own filtering. Here the matrix is built
+# from the RAW files (see ir_helpers.R::build_ir_dataset), joined by
+# intron Name -- so samples can never be misaligned -- and THEN
+# subset down to the whitelist of introns that passed filtering.
+# ============================================================
+
+setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
+source("ir_helpers.R")
+library(DESeq2)
+
+base_dir <- "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification"
+study    <- "ERP171667"
+outdir   <- file.path("results", "ir", study)
+dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+
+meta <- data.frame(
+  sample    = c("ERR14856082","ERR14856083","ERR14856084",
+                "ERR14856085","ERR14856086","ERR14856087"),
+  condition = factor(c("DMSO","DMSO","DMSO","T025","T025","T025"),
+                      levels = c("DMSO","T025")),
+  stringsAsFactors = FALSE
+)
+
+raw_paths  <- raw_path(base_dir, study, meta$sample)
+shah_paths <- shah_filtered_path(base_dir, study, meta$sample)
+
+# ---- Build ID-aligned counts from the raw files, then subset to whitelist -
+mats      <- build_ir_dataset(raw_paths, meta$sample)
+whitelist <- get_whitelist(shah_paths)
+
+keep <- rownames(mats$IntronDepth) %in% whitelist
+intron_m <- mats$IntronDepth[keep, , drop = FALSE]
+splice_m <- mats$MaxSplice[keep, , drop = FALSE]
+message(study, ": ", nrow(intron_m), " introns going into DESeq2 (of ",
+        nrow(mats$IntronDepth), " total scored)")
+
+# ---- DESeq2 -----------------------------------------------------------
+dds <- make_ir_dds(intron_m, splice_m, meta, ~ condition + condition:IRFinder)
+dds <- DESeq(dds)
+
+message("Available coefficients:")
+print(resultsNames(dds))
+
+res <- results(dds, name = "conditionT025.IRFinderIR")
+write.csv(as.data.frame(res), file.path(outdir, "T025_vs_DMSO.csv"))
+```
+
 
 ## 6.1. Velde et al. 2026 (DMSO vs T025)
+
 
 ```{r import dIR data for Velde et al 2026}
 Velde_T025_vs_DMSO <- read_csv("results/ir/ERP171667/T025_vs_DMSO.csv")
@@ -914,6 +1547,101 @@ ir_volcano_plot_ERP171667 <- ggplot(volc_data, aes(x = delta_mean_ir_ratio_T025_
 
 
 ## 6.2. Zhu et al. 2018
+
+```{r eval = FALSE}
+# ============================================================
+# STEP 3b: Differential intron retention, SRP141379
+#
+# Two analyses:
+#   A) Timepoint-specific: separate DESeq2 run at 6hr and at 24hr,
+#      each comparing 3uM vs DMSO and 10uM vs DMSO.
+#   B) Total/pooled: all 16 samples together, comparing 3uM vs DMSO
+#      and 10uM vs DMSO with `hours` included as a covariate (i.e.
+#      the drug effect is estimated adjusting for timepoint, rather
+#      than ignoring timepoint entirely). 
+#
+# Same row-alignment as the ERP171667 script: counts are built
+# from RAW files joined by intron Name, then subset to a whitelist.
+# ============================================================
+
+setwd("/bioinformatics/moniquew/BrCa-Special-Topics/")
+source("ir_helpers.R")
+library(DESeq2)
+
+base_dir <- "/bioinformatics/moniquew/BrCa-Special-Topics/raw_data/IR_quantification"
+study    <- "SRP141379"
+
+meta <- data.frame(
+  sample = c("SRS3204967","SRS3204969","SRS3204968","SRS3204970",
+             "SRS3204971","SRS3204972","SRS3204973",
+             "SRS3204974","SRS3204975","SRS3204976",
+             "SRS3204977","SRS3204978","SRS3204979",
+             "SRS3204980","SRS3204981","SRS3204982"),
+  condition = c("DMSO","DMSO","DMSO","DMSO",
+                "CC671_3uM","CC671_3uM","CC671_3uM",
+                "CC671_3uM","CC671_3uM","CC671_3uM",
+                "CC671_10uM","CC671_10uM","CC671_10uM",
+                "CC671_10uM","CC671_10uM","CC671_10uM"),
+  hours = c(6,6,24,24, 6,6,6, 24,24,24, 6,6,6, 24,24,24),
+  stringsAsFactors = FALSE
+)
+metacondition<-factor(metacondition, levels = c("DMSO","CC671_3uM","CC671_10uM"))
+metahours   <-factor(metahours, levels = c(6, 24))
+
+raw_paths  <- raw_path(base_dir, study, meta$sample)
+shah_paths <- shah_filtered_path(base_dir, study, meta$sample)
+
+mats      <- build_ir_dataset(raw_paths, meta$sample)
+whitelist <- get_whitelist(shah_paths)   # union across all 16 samples
+
+keep <- rownames(mats$IntronDepth) %in% whitelist
+intron_m_all <- mats$IntronDepth[keep, , drop = FALSE]
+splice_m_all <- mats$MaxSplice[keep, , drop = FALSE]
+message(study, ": ", nrow(intron_m_all), " introns going into DESeq2 (of ",
+        nrow(mats$IntronDepth), " total scored)")
+
+run_contrasts <- function(dds, outdir) {
+  dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+  message("Available coefficients: "); print(resultsNames(dds))
+  for (drug in c("CC671_3uM", "CC671_10uM")) {
+    coef_name <- paste0("condition", drug, ".IRFinderIR")
+    if (!coef_name %in% resultsNames(dds)) {
+      message("Skipping ", drug, " -- coefficient not present (no samples at this timepoint?)")
+      next
+    }
+    res <- results(dds, name = coef_name)
+    write.csv(as.data.frame(res), file.path(outdir, paste0(drug, "_vs_DMSO.csv")))
+    message(drug, " vs DMSO: ", sum(res$padj < 0.05, na.rm = TRUE), " significant introns")
+  }
+}
+
+# ---- A) Timepoint-specific analyses ---------------------------------------
+for (tp in c(6, 24)) {
+  label     <- paste0(tp, "hr")
+  idx       <- meta$hours == tp
+  sub_meta  <- droplevels(meta[idx, ])
+  sub_metacondition<-droplevels(submetacondition)
+
+  dds <- make_ir_dds(intron_m_all, splice_m_all, sub_meta,
+                      ~ condition + condition:IRFinder)
+  dds <- DESeq(dds)
+
+  message("--- Timepoint: ", label, " ---")
+  run_contrasts(dds, file.path("results", "ir", study, label))
+}
+
+# ---- B) Total/pooled analysis (drug effect adjusted for timepoint) --------
+dds_total <- make_ir_dds(intron_m_all, splice_m_all, meta,
+                          ~ hours + condition + condition:IRFinder)
+dds_total <- DESeq(dds_total)
+
+message("--- Pooled analysis (adjusted for timepoint) ---")
+run_contrasts(dds_total, file.path("results", "ir", study, "total"))
+
+message("Done. Results under results/ir/", study)
+```
+
+
 ```{r import dIR data for Zhu et al. 2018}
 CC671_3uM_vs_DMSO_6hr <- read_csv("results/ir/SRP141379/6hr/CC671_3uM_vs_DMSO.csv")
 CC671_3uM_vs_DMSO_24hr <- read_csv("results/ir/SRP141379/24hr/CC671_3uM_vs_DMSO.csv")
@@ -1968,8 +2696,9 @@ volcano_zhu_6hr_3uM_gene <-ggplot(volc_data, aes(x = log2FoldChange, y = -log10(
 ```{r}
 dEG_6hr_CC671_3uM_vs_DMSO |> 
   filter(log2FoldChange >= 2,
-         padj <= 0.05) |> 
-  arrange(desc(log2FoldChange))
+         padj < 0.01) |> 
+  arrange(desc(log2FoldChange))|> 
+  dplyr::select(log2FoldChange, SYMBOL)
 
 #351 genes of 18114 are have increased expression in cells treated with CC671 compared to DMSO
 ```
@@ -2035,7 +2764,7 @@ volcano_zhu_6hr_10uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log1
 ```{r}
 dEG_6hr_CC671_10uM_vs_DMSO |> 
   filter(log2FoldChange >= 2,
-         padj <= 0.01) |> 
+         padj < 0.01) |> 
   arrange(desc(log2FoldChange))
 
 dEG_6hr_CC671_10uM_vs_DMSO |>
@@ -2091,7 +2820,7 @@ volcano_zhu_24hr_3uM_gene <- ggplot(volc_data, aes(x = log2FoldChange, y = -log1
 ```{r}
 dEG_24hr_CC671_3uM_vs_DMSO |> 
   filter(log2FoldChange >= 2,
-         padj <= 0.01) |> 
+         padj < 0.01) |> 
   arrange(desc(log2FoldChange))
 
 dEG_24hr_CC671_3uM_vs_DMSO |> 
@@ -2161,8 +2890,8 @@ dEG_SRP141379_volcano <- ggarrange(volcano_zhu_6hr_3uM_gene,
 ```
 
 
-# 9. Cross study comparisons
-## 9.1. Are intron events consistent between T-025 and CC-671 after 24 hours?
+# 8. Cross study comparisons
+## 8.1. Are intron events consistent between T-025 and CC-671 after 24 hours?
 ```{r}
 volcano_velde <- left_join(Velde_T025_vs_DMSO, delta_erp, join_by(intron_id == IntronID))
 volcano_velde <- volcano_velde |> 
@@ -2599,11 +3328,9 @@ sapply(sig_list_introns, length)
 ```
 
 
-## 9.2. Are differentially expressed genes consistent among treatments?
+## 8.2. Are differentially expressed genes consistent among treatments?
 ```{r}
 library(UpSetR)
-# or: library(ComplexUpset)  # if you want ggplot-styled output matching your theme_bw() plots
-
 # Helper to build a "significant gene" vector from a DESeq2-style results table
 get_sig_genes <- function(df, lfc_thresh = 2, padj_thresh = 0.01, basemean_thresh = 10) {
   df |>
@@ -2683,8 +3410,6 @@ shared_all_deg
 library(org.Hs.eg.db)
 library(AnnotationDbi)
 
-# Ensembl IDs sometimes have version suffixes (e.g. ENSG00000141510.15) — 
-# org.Hs.eg.db expects unversioned IDs, so strip the suffix if present
 shared_all_clean_deg <- sub("\\..*$", "", shared_all_deg)
 
 shared_all_df <- tibble(
@@ -2833,18 +3558,17 @@ ERP_ir_plot1 <- ggarrange(ERP171667_IR_burden, ERP171667_ir_ratio, labels = c("A
 
 ERP_ir_plot <- ggarrange(ERP_ir_plot1, ir_volcano_plot_ERP171667, ncol =1, heights = c(1.5, 0.7), labels = c("", "D"))
 
-ggsave(filename = "ERP171667_ir_plot.PNG",
-       plot = ERP_ir_plot,
-       width = 180,
-       height = 200,
-       unit = "mm")
-
-ggsave(filename = "ERP171667_ir_plot.PDF",
-       plot = ERP_ir_plot,
-       width = 180,
-       height = 200,
-       unit = "mm")
-
+# ggsave(filename = "ERP171667_ir_plot.PNG",
+#        plot = ERP_ir_plot,
+#        width = 180,
+#        height = 200,
+#        unit = "mm")
+# 
+# ggsave(filename = "ERP171667_ir_plot.PDF",
+#        plot = ERP_ir_plot,
+#        width = 180,
+#        height = 200,
+#        unit = "mm")
 ```
 
 ## Zhu et al Introns
@@ -2984,11 +3708,11 @@ ir_volcano_plot_24hr_SRP141379 <- ggpubr::ggarrange(ir_volcano_plot_SRP141379_3u
 Zhu_24hours_ir <- ggarrange(IR_burden_SRP1141379_24hr, ir_ratio_zhu_24hours, ir_volcano_plot_24hr_SRP141379,  ncol = 1, heights = c(1.25, 1.5, 0.7), labels = c("A", ""))
 Zhu_24hours_ir
 
-ggsave(Zhu_24hours_ir,
-       filename = "Zhu_24hours_ir.PDF",
-       height = 280,
-       width = 180,
-       units = "mm")
+# ggsave(Zhu_24hours_ir,
+#        filename = "Zhu_24hours_ir.PDF",
+#        height = 280,
+#        width = 180,
+#        units = "mm")
 ```
 
 
@@ -3001,10 +3725,10 @@ plot_deg <- ggarrange(deg_ERP171667_plot, dEG_SRP141379_volcano, ncol = 1, label
 
 plot_deg
 
-ggsave(plot = plot_deg,
-       filename = "DEG_combined.PDF",
-       height = 220,
-       width = 180, unit = "mm")
+# ggsave(plot = plot_deg,
+#        filename = "DEG_combined.PDF",
+#        height = 220,
+#        width = 180, unit = "mm")
 ```
 
 
